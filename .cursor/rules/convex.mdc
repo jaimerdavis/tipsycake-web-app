@@ -1,0 +1,105 @@
+---
+description: Convex backend patterns, function syntax, schema design, indexes, and best practices
+globs: "**/convex/**/*.ts"
+alwaysApply: false
+---
+
+# Convex Development Rules
+
+## Function Syntax
+
+### Query
+```typescript
+import { query } from "./_generated/server";
+import { v } from "convex/values";
+
+export const getTaskList = query({
+  args: { taskListId: v.id("taskLists") },
+  handler: async (ctx, args) => {
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_taskListId", (q) => q.eq("taskListId", args.taskListId))
+      .order("desc")
+      .take(100);
+    return tasks;
+  }
+});
+```
+
+### Mutation
+```typescript
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+export const createTask = mutation({
+  args: { text: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("tasks", { text: args.text });
+  }
+});
+```
+
+### Action (for external API calls)
+```typescript
+import { action } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { v } from "convex/values";
+
+export const callExternalApi = action({
+  args: { input: v.string() },
+  handler: async (ctx, args) => {
+    const data = await fetch("https://api.example.com");
+    const json = await data.json();
+    await ctx.runMutation(internal.myModule.saveToDB, { data: json });
+    return json;
+  }
+});
+```
+
+## Schema with Indexes
+
+**IMPORTANT: Always prefer indexes over `.filter()` for queries.**
+
+```typescript
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  messages: defineTable({
+    channel: v.id("channels"),
+    body: v.string(),
+    user: v.id("users"),
+  })
+    .index("by_channel", ["channel"])
+    .index("by_channel_user", ["channel", "user"]),
+});
+```
+
+## HTTP Router
+```typescript
+import { httpRouter } from "convex/server";
+
+const http = httpRouter();
+http.route({ path: "/webhook", method: "POST", handler: webhookHandler });
+export default http;
+```
+
+## Scheduled Jobs / Crons
+```typescript
+import { cronJobs } from "convex/server";
+import { internal } from "./_generated/api";
+
+const crons = cronJobs();
+crons.interval("expire holds", { minutes: 1 }, internal.scheduling.expireHolds);
+export default crons;
+```
+
+## Key Rules
+
+- Use `v.` validators for all function args
+- Use `.withIndex()` not `.filter()` for queries
+- Use `.collect()` only for small result sets
+- Actions for external calls; mutations for DB writes
+- Use `internal` for server-only functions
+- Always `await` all Promises
+- Name functions: `api.module.functionName`

@@ -1,0 +1,28 @@
+---
+description: Strict delivery-readiness gates for traceability, testing, and approvals
+alwaysApply: true
+---
+
+# Delivery Readiness Gates
+
+## Required Before Starting Any Task
+
+- Restate requirement IDs from `SPEC.md` (for example `SCH-009`, `INV-001`).
+- List exact files to change.
+- State whether change touches risky domains: `SCH`, `PAY`, `PRM`, `LOY`, `RBAC`, pricing.
+
+If any requirement ID is missing, stop and ask for clarification.
+
+## Required Before Marking Task Complete
+
+- Provide: requirement IDs implemented, files changed, tests run, remaining risks.
+- Include explicit "not implemented" items if anything from requested IDs is deferred.
+- Include rollback note: how to revert safely if deploy fails.
+
+## Hard Stop Conditions
+
+Stop and request user approval before continuing when:
+
+- A change modifies scheduling capacity/holds, payment finalization, coupon redemption, loyalty math, RBAC, or schema migration.
+- A migration is required for existing data.
+- A fix changes canonical pricing calculation order.

@@ -1,0 +1,16 @@
+node_modules/
+.next/
+.env
+.env.local
+.env.*.local
+*.log
+dist/
+.DS_Store
+Thumbs.db
+
+# Cursor IDE
+.cursor/projects/
+.cursor/browser-logs/
+
+# OS
+Desktop.ini

@@ -1,0 +1,13 @@
+---
+description: Prevent business logic from leaking into Next.js API routes
+globs: "**/src/app/api/**/*.ts"
+alwaysApply: true
+---
+
+# No Next.js API Routes
+
+Business logic and external callbacks (webhooks, payment flows, notifications) live in **Convex** — not in Next.js API routes.
+
+- Do not create files under `src/app/api/`. Convex HTTP actions (`convex/http.ts`) handle all webhook endpoints.
+- If a Next.js server component needs data, use Convex queries via the client, not a local API route.
+- The only exception is Next.js middleware for redirects or auth guards, which is fine in `middleware.ts`.

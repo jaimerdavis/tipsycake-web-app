@@ -1,0 +1,42 @@
+---
+description: TheTipsyCake SPEC compliance rules — enforces AI-DEV-001 through AI-DEV-007
+alwaysApply: true
+---
+
+# TheTipsyCake SPEC Compliance
+
+You are working in the TheTipsyCake ordering web app repo (`order.tipsycake.com`).
+The authoritative specification is `SPEC.md` at the repo root. Read it before implementing.
+
+## Non-negotiable AI development rules
+
+**AI-DEV-001** Implement only by requirement IDs in SPEC.md. No invented features.
+
+**AI-DEV-002** UI primitives must be from `@/components/ui/*` (shadcn/ui). Do not create a second component library.
+
+**AI-DEV-003** All business logic is server-side in Convex (fees, eligibility, scheduling, coupon validation, holds, order totals, loyalty). Never compute prices or validate coupons on the client.
+
+**AI-DEV-004** Payments are webhook-authoritative and must be idempotent (INV-002).
+
+**AI-DEV-005** Scheduling must enforce capacity with holds and pass concurrency tests (INV-001).
+
+**AI-DEV-006** All state transitions must be logged to `orderEvents` + `auditLogs`.
+
+**AI-DEV-007** Never commit secrets. Only env vars via `.env.local`.
+
+## Workflow
+
+1. Before coding: restate requirement IDs and list files to change.
+2. After coding: provide summary, how to test, any migration steps, and risks.
+3. Keep requests small and commit frequently.
+4. Reference SPEC.md section numbers when discussing features.
+
+## Tech stack (locked)
+
+- Frontend: Next.js (App Router) + TypeScript
+- Styling: TailwindCSS
+- UI: shadcn/ui (`@/components/ui/*`)
+- Forms: react-hook-form + zod
+- Backend: Convex (DB + functions + realtime)
+- Payments: Stripe + PayPal (webhook-authoritative)
+- Maps: Google Places Autocomplete + geocoding

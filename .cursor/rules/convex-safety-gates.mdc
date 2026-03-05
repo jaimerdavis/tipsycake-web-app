@@ -1,0 +1,31 @@
+---
+description: Convex safety gates for idempotency, indexes, timezone, and observability
+globs: "**/convex/**/*.ts"
+alwaysApply: false
+---
+
+# Convex Safety Gates
+
+## Query and Index Gate
+
+- Do not introduce broad `.filter()` scans on high-volume tables.
+- Prefer `.withIndex()` for lookup paths used in production flows.
+- If using `.filter()`, justify why no index is possible and bound result size.
+
+## Webhook and Idempotency Gate
+
+- Webhook handlers must be replay-safe.
+- Persist and dedupe by provider event ID in `webhookEvents`.
+- Add or update replay tests for duplicate webhook events.
+
+## Scheduling and Timezone Gate
+
+- Slot/cutoff/lead-time logic must use store timezone from rules.
+- Include DST-sensitive test cases for scheduling behavior.
+- Capacity checks must count active holds + bookings atomically.
+
+## Observability Gate
+
+- Critical state transitions write `orderEvents` and/or `auditLogs`.
+- Log failures with structured context (operation, order/cart IDs, provider event ID).
+- Never log secrets or raw payment payloads containing sensitive data.

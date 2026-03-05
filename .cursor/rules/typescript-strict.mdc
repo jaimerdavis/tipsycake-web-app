@@ -1,0 +1,13 @@
+---
+description: Strict TypeScript rules for all source code
+globs: "**/*.{ts,tsx}"
+alwaysApply: true
+---
+
+# Strict TypeScript
+
+- No `any`. Use `unknown` with type guards or explicit interfaces.
+- No `// eslint-disable` or `// @ts-ignore` unless paired with a comment explaining why.
+- Prefer `as const` over type assertions. Use `satisfies` for type-checking object literals.
+- Function return types: inferred is fine for simple cases; explicit for public API functions.
+- Convex validators (`v.`) are the source of truth for function arg types — don't duplicate them as separate TypeScript interfaces.

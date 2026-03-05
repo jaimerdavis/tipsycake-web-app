@@ -1,0 +1,39 @@
+---
+description: Enforce shadcn/ui primitives for all UI — no custom component libraries
+globs: "**/*.tsx"
+alwaysApply: false
+---
+
+# UI Primitives (shadcn/ui only)
+
+Per AI-DEV-002: all UI must compose from `@/components/ui/*` (shadcn/ui).
+
+## Required primitives (SPEC section 20)
+
+Button, Input, Label, Select, Checkbox, RadioGroup, Switch,
+Dialog, Sheet, Popover, Tabs, Card, Table, Toast/Sonner,
+Badge, Separator, Skeleton
+
+## Rules
+
+- Import from `@/components/ui/button`, `@/components/ui/card`, etc.
+- Use `cn()` from `@/lib/utils` for conditional classes.
+- Use `cva` (class-variance-authority) for component variants.
+- Mobile-first responsive design with Tailwind.
+- Never create parallel UI primitives (no custom Button, Modal, etc.).
+
+## Forms
+
+- Use `react-hook-form` with `zodResolver` for validation.
+- Use shadcn `<Form>`, `<FormField>`, `<FormItem>`, `<FormLabel>`, `<FormMessage>`.
+- Define Zod schema, infer types with `z.infer<typeof schema>`.
+
+```tsx
+// ✅ Correct
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Form, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
+
+// ❌ Wrong — do not create custom primitives
+import { CustomButton } from "@/components/CustomButton"
+```

@@ -1,0 +1,79 @@
+---
+description: Convex business logic patterns — invariants, webhooks, scheduling, concurrency
+globs: "**/convex/**/*.ts"
+alwaysApply: false
+---
+
+# Convex Business Logic Patterns
+
+## Critical Invariants (SPEC section 6)
+
+**INV-001** No overbooking: `holds + bookings` must never exceed slot capacity.
+**INV-002** No duplicate paid orders: webhook idempotency via `webhookEvents` table.
+**INV-003** Coupon usage limits cannot be bypassed under concurrency.
+**INV-004** Price integrity: fee/discount shown must match charged.
+**INV-005** Timezone correctness for cutoffs and lead times.
+
+## Webhook Idempotency Pattern (PAY-004, PAY-005)
+
+```typescript
+// In webhook handler mutation:
+const existing = await ctx.db
+  .query("webhookEvents")
+  .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
+  .first();
+if (existing?.status === "processed") return; // idempotent skip
+```
+
+- Store every webhook event in `webhookEvents` before processing.
+- Check for duplicate `eventId` before creating orders.
+- Validate webhook signatures server-side.
+
+## Slot Hold Pattern (SCH-009, SCH-011)
+
+```typescript
+// In createHold mutation — atomic capacity check:
+const activeHolds = await ctx.db
+  .query("slotHolds")
+  .withIndex("by_slotKey", (q) => q.eq("slotKey", slotKey))
+  .filter((q) => q.eq(q.field("status"), "held"))
+  .collect();
+const bookings = await ctx.db
+  .query("slotBookings")
+  .withIndex("by_slotKey", (q) => q.eq("slotKey", slotKey))
+  .collect();
+if (activeHolds.length + bookings.length >= capacity.maxOrders) {
+  throw new Error("SLOT_FULL");
+}
+// Create hold — Convex mutation serialization prevents races
+```
+
+Convex mutations are transactional — two simultaneous `createHold` calls on the same slot will serialize and the second will see the first's hold.
+
+## Coupon Atomic Redemption (PRM-002, INV-003)
+
+Count existing redemptions in the same mutation that creates the new redemption. Convex transaction isolation prevents races.
+
+## State Transition Logging (AI-DEV-006)
+
+Every order status change must insert into `orderEvents`:
+```typescript
+await ctx.db.insert("orderEvents", {
+  orderId, status: newStatus,
+  actorType: "system", // or "admin" or "driver"
+  actorId, note,
+  createdAt: Date.now(),
+});
+```
+
+## Pricing Computation Order (SPEC section 9)
+
+1. Subtotal = Σ(unitPrice × qty) + modifier deltas
+2. Coupon discount
+3. Loyalty redemption discount
+4. Delivery/shipping fee
+5. Tip
+6. Tax (stored even if inclusive)
+7. Total = subtotal - discounts + fees + tip
+
+Always compute server-side. Never trust client-computed totals.

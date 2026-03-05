@@ -1,0 +1,12 @@
+---
+description: Environment variable access rules for Convex functions
+globs: "**/convex/**/*.ts"
+alwaysApply: true
+---
+
+# Convex Environment Variables
+
+- `process.env` is **only available** in `"use node"` actions and `httpAction` handlers (these run in Node.js).
+- Queries and mutations run in Convex's V8 runtime where `process.env` is **not available**. Do not use it there.
+- For secrets needed in queries/mutations, pass them as args from an action that reads `process.env`, or restructure the code so the external call lives in an action.
+- Always validate that env vars exist before using them: `if (!value) throw new Error("Missing: VAR_NAME")`.

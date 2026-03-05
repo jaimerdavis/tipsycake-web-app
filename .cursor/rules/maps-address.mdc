@@ -1,0 +1,23 @@
+---
+description: Address, geocoding, and delivery zone logic locations
+globs: "**/convex/maps.ts,**/convex/addresses.ts,**/convex/checkout.ts,**/AddressAutocomplete*"
+alwaysApply: false
+---
+
+# Maps & Address Logic
+
+## File locations
+- `convex/maps.ts` — Google Geocoding actions (`normalizeAndGeocodeAddress`, `computeDistanceAndZone`)
+- `convex/addresses.ts` — address CRUD, `listDeliveryZones`, `upsertAddressCache`
+- `convex/checkout.ts` — `getEligibility` reads `addressCache` + `deliveryTiers` for fee/eligibility
+- `src/components/AddressAutocomplete.tsx` — Google Places Autocomplete (client-side)
+
+## Caching
+- `addressCache` table stores `distanceMiles`, `zoneId`, `eligibleDelivery`, `eligibleShipping` per address.
+- `computeDistanceAndZone` action populates the cache; `getEligibility` query reads it.
+- Cache is keyed by `addressId` — one entry per address.
+
+## Rules
+- Geocoding and distance computation are **actions** (external API calls). Never do these in queries or mutations.
+- Address autocomplete uses `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` (client-side). Server geocoding uses `GOOGLE_MAPS_API_KEY`.
+- When the API key is not configured, both degrade gracefully (autocomplete shows manual entry; server returns unvalidated address).

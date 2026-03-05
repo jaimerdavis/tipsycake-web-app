@@ -1,0 +1,30 @@
+---
+description: UX reliability gates for checkout, error handling, and resilience
+globs: "**/*.tsx"
+alwaysApply: false
+---
+
+# UX Reliability Gates
+
+## Checkout UX Safety
+
+- Never silently fail checkout steps.
+- Show actionable error states with recovery action (retry, edit address, pick another slot).
+- If address/fulfillment/slot changes, force fee and availability revalidation.
+
+## Form and Validation Safety
+
+- Use `react-hook-form` + `zod` for customer/admin forms.
+- Validate on server even if client-side validation exists.
+- Keep customer input when possible after recoverable failures.
+
+## Performance and Stability
+
+- Avoid blocking UI on non-critical requests.
+- Use loading/skeleton states for async checkout and status steps.
+- Ensure mobile-first interactions remain usable with one-hand flow.
+
+## Accessibility Baseline
+
+- Label all interactive controls and form fields.
+- Ensure keyboard and screen-reader path works for checkout completion.
