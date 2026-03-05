@@ -1,5 +1,6 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 
@@ -51,7 +52,7 @@ async function finalizeFromPaymentEvent(
       createdAt: now,
     }));
 
-  const cart = await ctx.db.get(params.cartId as never);
+  const cart = await ctx.db.get(params.cartId as Id<"carts">);
   if (!cart) {
     await ctx.db.patch(eventDocId, {
       status: "failed",
@@ -83,7 +84,7 @@ async function finalizeFromPaymentEvent(
   let couponIdForRedemption: string | undefined;
 
   if (cart.appliedCouponId) {
-    const coupon = await ctx.db.get(cart.appliedCouponId as never);
+    const coupon = await ctx.db.get(cart.appliedCouponId as Id<"coupons">);
     if (coupon && coupon.enabled && (!coupon.expiresAt || coupon.expiresAt > now)) {
       const totalRedemptions = await ctx.db
         .query("couponRedemptions")
@@ -208,7 +209,7 @@ async function finalizeFromPaymentEvent(
   }
 
   if (cart.slotHoldId) {
-    const hold = await ctx.db.get(cart.slotHoldId as never);
+    const hold = await ctx.db.get(cart.slotHoldId as Id<"slotHolds">);
     if (hold && hold.status === "held" && hold.expiresAt > now) {
       const [, , mode] = hold.slotKey.split("|");
       await ctx.db.patch(hold._id, {
@@ -254,7 +255,7 @@ async function finalizeFromPaymentEvent(
   }
 
   if (loyaltyAccountId && loyaltyPointsRedeemed > 0) {
-    const account = await ctx.db.get(loyaltyAccountId as never);
+    const account = await ctx.db.get(loyaltyAccountId as Id<"loyaltyAccounts">);
     if (account) {
       await ctx.db.patch(account._id, {
         pointsBalance: account.pointsBalance - loyaltyPointsRedeemed,
@@ -325,6 +326,16 @@ async function finalizeFromPaymentEvent(
   return { deduped: false, orderId };
 }
 
+export const getByPaymentIntent = query({
+  args: { paymentIntentId: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("orders")
+      .withIndex("by_paymentIntentId", (q) => q.eq("paymentIntentId", args.paymentIntentId))
+      .unique();
+  },
+});
+
 export const getByToken = query({
   args: {
     token: v.string(),
@@ -394,7 +405,7 @@ export const markPaymentFailed = mutation({
 
     const now = Date.now();
     if (cart.slotHoldId) {
-      const hold = await ctx.db.get(cart.slotHoldId as never);
+      const hold = await ctx.db.get(cart.slotHoldId as Id<"slotHolds">);
       if (hold && hold.status === "held") {
         await ctx.db.patch(hold._id, {
           status: "released",

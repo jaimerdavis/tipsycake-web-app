@@ -114,34 +114,44 @@ export const computeDistanceAndZone = action({
   args: {
     addressId: v.id("addresses"),
   },
-  handler: async (ctx, args) => {
-    const address = await ctx.runQuery(api.addresses.getAddressById, {
+  handler: async (ctx, args): Promise<{
+    distanceMiles: number;
+    zoneId: string | null;
+    eligibleDelivery: boolean;
+    eligibleShipping: boolean;
+  }> => {
+    const address = (await ctx.runQuery(api.addresses.getAddressById, {
       addressId: args.addressId,
-    });
+    })) as { lat: number; lng: number } | null;
     if (!address) throw new Error("Address not found");
 
-    const lat = address.lat;
-    const lng = address.lng;
+    const lat: number = address.lat;
+    const lng: number = address.lng;
 
     const R = 3959; // Earth radius miles
-    const dLat = ((lat - STORE_ORIGIN.lat) * Math.PI) / 180;
-    const dLng = ((lng - STORE_ORIGIN.lng) * Math.PI) / 180;
-    const a =
+    const dLat: number = ((lat - STORE_ORIGIN.lat) * Math.PI) / 180;
+    const dLng: number = ((lng - STORE_ORIGIN.lng) * Math.PI) / 180;
+    const a: number =
       Math.sin(dLat / 2) ** 2 +
       Math.cos((STORE_ORIGIN.lat * Math.PI) / 180) *
         Math.cos((lat * Math.PI) / 180) *
         Math.sin(dLng / 2) ** 2;
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const distanceMiles = R * c;
+    const c: number = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distanceMiles: number = R * c;
 
-    const zones = await ctx.runQuery(api.addresses.listDeliveryZones, {});
+    interface DeliveryZone {
+      _id: string;
+      enabled: boolean;
+      polygonGeoJson?: { coordinates?: number[][][] };
+    }
+    const zones = (await ctx.runQuery(api.addresses.listDeliveryZones, {})) as DeliveryZone[];
 
     let zoneId: string | null = null;
     const x = lng;
     const y = lat;
     for (const z of zones) {
       if (!z.polygonGeoJson) continue;
-      const coords = (z.polygonGeoJson as { coordinates?: number[][][] })?.coordinates?.[0];
+      const coords = z.polygonGeoJson?.coordinates?.[0];
       if (!coords) continue;
       let inside = false;
       const n = coords.length;
@@ -163,8 +173,8 @@ export const computeDistanceAndZone = action({
     await ctx.runMutation(api.addresses.upsertAddressCache, {
       addressId: args.addressId,
       distanceMiles,
-      zoneId: zoneId ?? undefined,
-      eligibleDelivery: zones.some((z) => z.enabled) && distanceMiles < 15,
+      zoneId: (zoneId ?? undefined) as never,
+      eligibleDelivery: zones.some((z: DeliveryZone) => z.enabled) && distanceMiles < 15,
       eligibleShipping: true,
       computedAt: Date.now(),
     });

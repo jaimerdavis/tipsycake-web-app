@@ -6,8 +6,23 @@ import { requireRole } from "./lib/auth";
 export const myAssignments = query({
   args: {},
   handler: async (ctx) => {
-    await requireRole(ctx, "driver", "dispatcher", "admin");
-    return await ctx.db.query("driverAssignments").collect();
+    const user = await requireRole(ctx, "driver", "dispatcher", "admin");
+
+    if (user.role === "dispatcher" || user.role === "admin") {
+      return await ctx.db.query("driverAssignments").collect();
+    }
+
+    const driverRecord = await ctx.db
+      .query("drivers")
+      .withIndex("by_userId", (q) => q.eq("userId", user._id))
+      .unique();
+
+    if (!driverRecord) return [];
+
+    return await ctx.db
+      .query("driverAssignments")
+      .withIndex("by_driver", (q) => q.eq("driverId", driverRecord._id))
+      .collect();
   },
 });
 

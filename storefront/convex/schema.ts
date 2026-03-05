@@ -337,7 +337,8 @@ export default defineSchema({
   })
     .index("by_orderNumber", ["orderNumber"])
     .index("by_guestToken", ["guestToken"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    .index("by_paymentIntentId", ["paymentIntentId"]),
 
   orderItems: defineTable({
     orderId: v.id("orders"),
@@ -433,12 +434,15 @@ export default defineSchema({
     .index("by_order", ["orderId"]),
 
   drivers: defineTable({
+    userId: v.optional(v.id("users")),
     name: v.string(),
     phone: v.string(),
     active: v.boolean(),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_active", ["active"]),
+  })
+    .index("by_active", ["active"])
+    .index("by_userId", ["userId"]),
 
   driverAssignments: defineTable({
     orderId: v.id("orders"),

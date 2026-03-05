@@ -1,9 +1,28 @@
 "use node";
 
-import { action, mutation } from "./_generated/server";
+import { action, internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import Stripe from "stripe";
 import { api, internal } from "./_generated/api";
+
+interface CartItem {
+  productId: string;
+  productName: string;
+  unitPriceSnapshotCents: number;
+  qty: number;
+}
+
+interface CartForPayment {
+  _id: string;
+  addressId?: string;
+  appliedCouponId?: string;
+  appliedCouponCode?: string;
+  appliedLoyaltyPoints?: number;
+  tipCents: number;
+  contactEmail?: string;
+  contactPhone?: string;
+  fulfillmentMode?: string;
+}
 
 function requireEnv(name: string) {
   const value = process.env[name];
@@ -26,13 +45,13 @@ export const createStripeSession = action({
     });
     if (!cartData) throw new Error("Cart not found or access denied");
 
-    const { cart, items } = cartData;
+    const { cart, items } = cartData as { cart: CartForPayment; items: CartItem[] };
     let deliveryFeeCents = 0;
     let shippingFeeCents = 0;
 
     if (cart.addressId && cart.fulfillmentMode) {
       const eligibility = await ctx.runQuery(api.checkout.getEligibility, {
-        addressId: cart.addressId,
+        addressId: cart.addressId as never,
       });
       if (cart.fulfillmentMode === "delivery") {
         deliveryFeeCents = eligibility.delivery.feeCents;
@@ -163,7 +182,7 @@ export const createPaymentIntent = action({
     });
     if (!cartData) throw new Error("Cart not found or access denied");
 
-    const { cart, items } = cartData;
+    const { cart, items } = cartData as { cart: CartForPayment; items: CartItem[] };
     if (items.length === 0) throw new Error("Cart is empty");
 
     let deliveryFeeCents = 0;
@@ -171,7 +190,7 @@ export const createPaymentIntent = action({
 
     if (cart.addressId && cart.fulfillmentMode) {
       const eligibility = await ctx.runQuery(api.checkout.getEligibility, {
-        addressId: cart.addressId,
+        addressId: cart.addressId as never,
       });
       if (cart.fulfillmentMode === "delivery") {
         deliveryFeeCents = eligibility.delivery.feeCents;
@@ -228,7 +247,7 @@ export const createPaymentIntent = action({
       },
     });
 
-    await ctx.runMutation(api.payments.recordPaymentAttempt, {
+    await ctx.runMutation(api.paymentLogs.recordPaymentAttempt, {
       cartId: args.cartId,
       provider: "stripe",
       referenceId: paymentIntent.id,
@@ -238,23 +257,6 @@ export const createPaymentIntent = action({
       clientSecret: paymentIntent.client_secret!,
       amount: totalCents,
     };
-  },
-});
-
-export const recordPaymentAttempt = mutation({
-  args: {
-    cartId: v.id("carts"),
-    provider: v.union(v.literal("stripe"), v.literal("paypal")),
-    referenceId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    await ctx.db.insert("paymentAttempts", {
-      cartId: args.cartId,
-      provider: args.provider,
-      status: "started",
-      referenceId: args.referenceId,
-      createdAt: Date.now(),
-    });
   },
 });
 
@@ -278,14 +280,14 @@ export const createPayPalOrder = action({
     });
     if (!cartData) throw new Error("Cart not found or access denied");
 
-    const { cart, items } = cartData;
+    const { cart, items } = cartData as { cart: CartForPayment; items: CartItem[] };
     if (items.length === 0) throw new Error("Cart is empty");
 
     let deliveryFeeCents = 0;
     let shippingFeeCents = 0;
     if (cart.addressId && cart.fulfillmentMode) {
       const eligibility = await ctx.runQuery(api.checkout.getEligibility, {
-        addressId: cart.addressId,
+        addressId: cart.addressId as never,
       });
       if (cart.fulfillmentMode === "delivery") {
         deliveryFeeCents = eligibility.delivery.feeCents;
@@ -386,7 +388,7 @@ export const createPayPalOrder = action({
 
     if (!orderData.id) throw new Error("PayPal order creation failed");
 
-    await ctx.runMutation(api.payments.recordPaymentAttempt, {
+    await ctx.runMutation(api.paymentLogs.recordPaymentAttempt, {
       cartId: args.cartId,
       provider: "paypal",
       referenceId: orderData.id,
@@ -457,11 +459,36 @@ export const capturePayPalOrder = action({
   },
 });
 
-export const reconcileOrphans = action({
+export const reconcileOrphans = internalAction({
   args: {},
   handler: async (ctx) => {
-    void ctx;
-    // Placeholder for scheduled reconciliation job contract.
-    return { status: "ok", message: "No reconciliation logic wired yet." };
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    if (!stripeKey) return { status: "skipped", message: "Stripe not configured" };
+
+    const stripe = new Stripe(stripeKey);
+    const cutoff = Math.floor((Date.now() - 2 * 60 * 60 * 1000) / 1000);
+    const intents = await stripe.paymentIntents.list({
+      created: { gte: cutoff },
+      limit: 50,
+    });
+
+    let reconciled = 0;
+    for (const pi of intents.data) {
+      if (pi.status === "succeeded" && pi.metadata?.cartId) {
+        const existing = await ctx.runQuery(api.orders.getByPaymentIntent, {
+          paymentIntentId: pi.id,
+        });
+        if (!existing) {
+          await ctx.runMutation(internal.orders.finalizeFromStripe, {
+            eventId: `reconcile-${pi.id}`,
+            paymentIntentId: pi.id,
+            cartId: pi.metadata.cartId as never,
+          });
+          reconciled++;
+        }
+      }
+    }
+
+    return { status: "ok", reconciled };
   },
 });

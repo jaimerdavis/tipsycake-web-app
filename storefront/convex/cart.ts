@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 
 import { computePricingSnapshot, computeUnitPriceCents } from "./lib/pricing";
@@ -61,16 +62,16 @@ async function resolveOwner(
 
 async function validateAndPriceItem(
   ctx: MutationCtx,
-  productId: string,
-  variantId: string | undefined,
-  modifiers: Array<{ groupId: string; optionId: string }>
+  productId: Id<"products">,
+  variantId: Id<"productVariants"> | undefined,
+  modifiers: Array<{ groupId: Id<"modifierGroups">; optionId: Id<"modifierOptions"> }>
 ) {
-  const product = await ctx.db.get(productId as never);
+  const product = await ctx.db.get(productId);
   if (!product) throw new Error("Product not found");
 
   let variantDelta = 0;
   if (variantId) {
-    const variant = await ctx.db.get(variantId as never);
+    const variant = await ctx.db.get(variantId);
     if (!variant || variant.productId !== product._id) {
       throw new Error("Invalid variant for product");
     }
@@ -82,7 +83,7 @@ async function validateAndPriceItem(
     .withIndex("by_product", (q) => q.eq("productId", product._id))
     .collect();
 
-  const selectionsByGroup = new Map<string, string[]>();
+  const selectionsByGroup = new Map<string, Id<"modifierOptions">[]>();
   for (const selection of modifiers) {
     const existing = selectionsByGroup.get(selection.groupId) ?? [];
     existing.push(selection.optionId);
@@ -103,7 +104,7 @@ async function validateAndPriceItem(
     }
 
     for (const optionId of selectedOptionIds) {
-      const option = await ctx.db.get(optionId as never);
+      const option = await ctx.db.get(optionId);
       if (!option || option.groupId !== group._id) {
         throw new Error("Invalid modifier option selection");
       }
@@ -177,7 +178,7 @@ export const getActive = query({
 
     let couponDiscountCents = 0;
     if (cart.appliedCouponId) {
-      const coupon = await ctx.db.get(cart.appliedCouponId as never);
+      const coupon = await ctx.db.get(cart.appliedCouponId as Id<"coupons">);
       if (coupon && coupon.enabled && (!coupon.expiresAt || coupon.expiresAt > Date.now())) {
         const subtotalCents = items.reduce(
           (sum, item) => sum + item.unitPriceSnapshotCents * item.qty,
@@ -242,12 +243,9 @@ export const addItem = mutation({
 
     const unitPriceSnapshotCents = await validateAndPriceItem(
       ctx,
-      args.productId as unknown as string,
-      args.variantId as unknown as string | undefined,
-      args.modifiers.map((item) => ({
-        groupId: item.groupId as unknown as string,
-        optionId: item.optionId as unknown as string,
-      }))
+      args.productId,
+      args.variantId,
+      args.modifiers
     );
 
     const now = Date.now();
