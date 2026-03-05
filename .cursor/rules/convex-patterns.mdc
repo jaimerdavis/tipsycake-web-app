@@ -33,10 +33,12 @@ if (existing?.status === "processed") return; // idempotent skip
 
 ```typescript
 // In createHold mutation — atomic capacity check:
+// Requires index: slotHolds.index("by_slotKey_and_status", ["slotKey", "status"])
 const activeHolds = await ctx.db
   .query("slotHolds")
-  .withIndex("by_slotKey", (q) => q.eq("slotKey", slotKey))
-  .filter((q) => q.eq(q.field("status"), "held"))
+  .withIndex("by_slotKey_and_status", (q) =>
+    q.eq("slotKey", slotKey).eq("status", "held")
+  )
   .collect();
 const bookings = await ctx.db
   .query("slotBookings")
