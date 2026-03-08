@@ -19,14 +19,14 @@ export default function AnalyticsPage() {
 
   if (!data) {
     return (
-      <div className="p-6">
+      <div className="px-4 py-6 sm:px-6">
         <p className="text-sm text-muted-foreground">Loading analytics…</p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-8 p-6">
+    <div className="flex flex-col gap-8 px-4 py-6 sm:px-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Analytics</h1>
         <p className="text-sm text-muted-foreground">

@@ -4,8 +4,10 @@ import { useParams } from "next/navigation";
 import { useQuery } from "convex/react";
 
 import { api } from "../../../../../convex/_generated/api";
+import { productDisplayName } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DeliveryMap } from "@/components/DeliveryMap";
 
 const CARRIER_TRACKING_URLS: Record<string, (num: string) => string> = {
   ups: (n) => `https://www.ups.com/track?tracknum=${n}`,
@@ -25,8 +27,12 @@ function dollars(cents: number) {
 
 export default function OrderStatusByTokenPage() {
   const params = useParams<{ token: string }>();
-  const token = params.token;
+  const token = params.token as string;
   const order = useQuery(api.orders.getByToken, { token });
+  const deliveryTracking = useQuery(
+    api.orders.getDeliveryTrackingByToken,
+    order?.fulfillmentMode === "delivery" ? { token } : "skip"
+  );
 
   if (!order) {
     return (
@@ -42,20 +48,39 @@ export default function OrderStatusByTokenPage() {
       : null;
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-6">
-      <header className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Order Status</h1>
+    <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
+      <header className="animate-fade-in-up space-y-2">
+        <h1 className="font-display text-4xl text-brand-text">Order Status</h1>
         <p className="text-sm text-muted-foreground">
           Order #{order.orderNumber} &middot;{" "}
           <span className="capitalize">{order.fulfillmentMode}</span>
         </p>
-        <Badge>{order.status}</Badge>
+        <Badge className="rounded-full">{order.status}</Badge>
       </header>
 
-      {(order.carrier || order.trackingNumber) && (
-        <Card>
+      {order.fulfillmentMode === "delivery" && deliveryTracking && (
+        <Card className="rounded-2xl">
           <CardHeader>
-            <CardTitle>Shipping &amp; Tracking</CardTitle>
+            <CardTitle className="font-display text-2xl text-brand-text">Delivery Tracking</CardTitle>
+            <CardDescription>
+              {deliveryTracking.driverName && `Driver: ${deliveryTracking.driverName}`}
+              {deliveryTracking.eta && ` • ETA: ${deliveryTracking.eta}`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DeliveryMap
+              driverLocation={deliveryTracking.latestLocation ?? undefined}
+              destination={deliveryTracking.destination ?? undefined}
+              className="h-64 w-full rounded-lg border"
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {(order.carrier || order.trackingNumber) && (
+        <Card className="rounded-2xl">
+          <CardHeader>
+            <CardTitle className="font-display text-2xl text-brand-text">Shipping &amp; Tracking</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             {order.carrier && (
@@ -72,7 +97,7 @@ export default function OrderStatusByTokenPage() {
                     href={trackingUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-medium text-rose-600 underline underline-offset-2 hover:text-rose-700"
+                    className="font-medium text-brand-text underline underline-offset-2 hover:text-brand-hover"
                   >
                     {order.trackingNumber}
                   </a>
@@ -85,9 +110,9 @@ export default function OrderStatusByTokenPage() {
         </Card>
       )}
 
-      <Card>
+      <Card className="rounded-2xl">
         <CardHeader>
-          <CardTitle>Timeline</CardTitle>
+          <CardTitle className="font-display text-2xl text-brand-text">Timeline</CardTitle>
           <CardDescription>Status updates for your order</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -102,16 +127,16 @@ export default function OrderStatusByTokenPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="rounded-2xl">
         <CardHeader>
-          <CardTitle>Items</CardTitle>
+          <CardTitle className="font-display text-2xl text-brand-text">Items</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           {order.items.map((item) => (
             <div key={item._id} className="flex items-center justify-between rounded border p-3">
               <div>
                 <p className="font-medium">
-                  {(item.productSnapshot as { name?: string })?.name ?? "Item"}
+                  {productDisplayName((item.productSnapshot as { name?: string })?.name ?? "") || "Item"}
                 </p>
                 <p className="text-xs text-muted-foreground">Qty {item.qty}</p>
               </div>

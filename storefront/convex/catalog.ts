@@ -1,4 +1,5 @@
 import { query } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 
 export const listProducts = query({
@@ -46,14 +47,26 @@ export const getProduct = query({
       .withIndex("by_product", (q) => q.eq("productId", args.productId))
       .collect();
 
-    const modifierGroups = await ctx.db
+    // Global groups (productId undefined) apply to all products
+    const globalGroups = await ctx.db
+      .query("modifierGroups")
+      .filter((q) => q.eq(q.field("productId"), undefined))
+      .collect();
+
+    const productGroups = await ctx.db
       .query("modifierGroups")
       .withIndex("by_product_sort", (q) => q.eq("productId", args.productId))
       .collect();
 
-    const optionsByGroupId = new Map<string, unknown[]>();
+    // Merge: global first, then product-specific. Dedupe by name (global wins).
+    const globalNames = new Set(globalGroups.map((g) => g.name));
+    const productOnly = productGroups.filter((g) => !globalNames.has(g.name));
+    const mergedGroups = [...globalGroups, ...productOnly].sort(
+      (a, b) => a.sortOrder - b.sortOrder
+    );
 
-    for (const group of modifierGroups) {
+    const optionsByGroupId = new Map<string, Doc<"modifierOptions">[]>();
+    for (const group of mergedGroups) {
       const options = await ctx.db
         .query("modifierOptions")
         .withIndex("by_group_sort", (q) => q.eq("groupId", group._id))
@@ -64,7 +77,7 @@ export const getProduct = query({
     return {
       ...product,
       variants,
-      modifierGroups: modifierGroups.map((group) => ({
+      modifierGroups: mergedGroups.map((group) => ({
         ...group,
         options: optionsByGroupId.get(group._id) ?? [],
       })),

@@ -10,6 +10,15 @@ const fulfillmentFlags = v.object({
   shipping: v.boolean(),
 });
 
+const shapeImagesValidator = v.optional(
+  v.object({
+    mixed: v.optional(v.array(v.string())),
+    even20: v.optional(v.array(v.string())),
+    rose: v.optional(v.array(v.string())),
+    blossom: v.optional(v.array(v.string())),
+  })
+);
+
 export const listProducts = query({
   args: {},
   handler: async (ctx) => {
@@ -18,8 +27,28 @@ export const listProducts = query({
   },
 });
 
+export const listGlobalModifierGroups = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireRole(ctx, "admin", "manager");
+    const allGroups = await ctx.db.query("modifierGroups").collect();
+    const groups = allGroups.filter((g) => g.productId === undefined);
+    const sorted = groups.sort((a, b) => a.sortOrder - b.sortOrder);
+    const result = [];
+    for (const group of sorted) {
+      const options = await ctx.db
+        .query("modifierOptions")
+        .withIndex("by_group_sort", (q) => q.eq("groupId", group._id))
+        .collect();
+      result.push({ ...group, options });
+    }
+    return result;
+  },
+});
+
 export const createProduct = mutation({
   args: {
+    productCode: v.optional(v.string()),
     name: v.string(),
     slug: v.string(),
     description: v.string(),
@@ -35,9 +64,18 @@ export const createProduct = mutation({
   },
   handler: async (ctx, args) => {
     await requireRole(ctx, "admin", "manager");
+    const code = args.productCode?.trim();
+    if (code) {
+      const existing = await ctx.db
+        .query("products")
+        .withIndex("by_productCode", (q) => q.eq("productCode", code))
+        .first();
+      if (existing) throw new Error(`Product code "${code}" is already in use`);
+    }
     const now = Date.now();
     return await ctx.db.insert("products", {
       ...args,
+      productCode: code || undefined,
       createdAt: now,
       updatedAt: now,
     });
@@ -47,6 +85,7 @@ export const createProduct = mutation({
 export const updateProduct = mutation({
   args: {
     productId: v.id("products"),
+    productCode: v.optional(v.string()),
     name: v.optional(v.string()),
     slug: v.optional(v.string()),
     description: v.optional(v.string()),
@@ -59,16 +98,26 @@ export const updateProduct = mutation({
     leadTimeHoursOverride: v.optional(v.number()),
     inStockToday: v.optional(v.boolean()),
     maxQtyPerOrder: v.optional(v.number()),
+    shapeImages: shapeImagesValidator,
   },
   handler: async (ctx, args) => {
     await requireRole(ctx, "admin", "manager");
-    const { productId, ...updates } = args;
+    const { productId, productCode, ...updates } = args;
     const product = await ctx.db.get(productId);
-    if (!product) {
-      throw new Error("Product not found");
+    if (!product) throw new Error("Product not found");
+    const code = productCode?.trim();
+    if (code) {
+      const existing = await ctx.db
+        .query("products")
+        .withIndex("by_productCode", (q) => q.eq("productCode", code))
+        .first();
+      if (existing && existing._id !== productId) {
+        throw new Error(`Product code "${code}" is already in use`);
+      }
     }
     await ctx.db.patch(productId, {
       ...updates,
+      productCode: code || undefined,
       updatedAt: Date.now(),
     });
     return productId;
@@ -160,8 +209,10 @@ export const deleteVariant = mutation({
 
 export const createModifierGroup = mutation({
   args: {
-    productId: v.id("products"),
+    /** Omit for global groups (apply to all products). */
+    productId: v.optional(v.id("products")),
     name: v.string(),
+    description: v.optional(v.string()),
     required: v.boolean(),
     minSelect: v.number(),
     maxSelect: v.number(),
@@ -182,6 +233,7 @@ export const updateModifierGroup = mutation({
   args: {
     groupId: v.id("modifierGroups"),
     name: v.optional(v.string()),
+    description: v.optional(v.string()),
     required: v.optional(v.boolean()),
     minSelect: v.optional(v.number()),
     maxSelect: v.optional(v.number()),

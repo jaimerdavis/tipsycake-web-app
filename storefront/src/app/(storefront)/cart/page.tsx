@@ -5,20 +5,26 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 
 import { api } from "../../../../convex/_generated/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ProductImage } from "@/components/ProductImage";
 
-function getOrCreateGuestSessionId() {
-  const key = "tipsycake_guest_session_id";
-  const existing = window.localStorage.getItem(key);
-  if (existing) return existing;
-  const created = `guest_${crypto.randomUUID()}`;
-  window.localStorage.setItem(key, created);
-  return created;
-}
+import { getOrCreateGuestSessionId } from "@/lib/guestSession";
+import { productDisplayName } from "@/lib/utils";
 
 export default function CartPage() {
   const guestSessionId = useMemo(() => {
@@ -26,7 +32,8 @@ export default function CartPage() {
     return getOrCreateGuestSessionId();
   }, []);
   const [couponCode, setCouponCode] = useState("");
-  const [tipInput, setTipInput] = useState("0");
+  const [couponMessage, setCouponMessage] = useState<{ text: string; error: boolean } | null>(null);
+  const [tipInput, setTipInput] = useState("0.00");
 
   const cart = useQuery(
     api.cart.getActive,
@@ -54,154 +61,290 @@ export default function CartPage() {
 
   if (!cart) {
     return (
-      <main className="mx-auto flex w-full max-w-4xl flex-col gap-4 p-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Your Cart</h1>
+      <main className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 sm:px-6">
+        <h1 className="font-display text-4xl text-brand-text">Cake Order Summary</h1>
         <p className="text-sm text-muted-foreground">No active cart yet.</p>
-        <Button asChild className="w-fit">
-          <Link href="/products">Browse products</Link>
+        <Button asChild className="w-fit rounded-full bg-button text-stone-50 hover:bg-button-hover transition-all active:scale-[0.97]">
+          <Link href="/products">Browse cakes</Link>
         </Button>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-6">
-      <header className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Your Cart</h1>
+    <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6">
+      <header className="animate-fade-in-up space-y-2">
+        <h1 className="font-display text-4xl text-brand-text sm:text-5xl">Cake Order Summary</h1>
         <p className="text-sm text-muted-foreground">
-          Server-side totals are calculated from item snapshots.
+          Review your items before checkout.
         </p>
       </header>
 
       <section className="grid gap-4">
-        {cart.items.map((item) => (
-          <Card key={item._id}>
-            <CardContent className="flex items-center justify-between gap-4 p-4">
-              <div className="space-y-1">
-                <p className="text-sm font-medium">Product ID: {item.productId}</p>
-                <p className="text-xs text-muted-foreground">
-                  Unit snapshot: {item.unitPriceSnapshotCents} cents
-                </p>
-                <p className="text-xs text-muted-foreground">Qty: {item.qty}</p>
-                {item.itemNote ? <p className="text-xs">Note: {item.itemNote}</p> : null}
+        {cart.items.map((item, i) => (
+          <Card key={item._id} className={`animate-fade-in-up stagger-${Math.min(i + 1, 6)} rounded-2xl transition-shadow duration-200 hover:shadow-md`}>
+            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="flex items-center gap-4 min-w-0 flex-1">
+                <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl">
+                  <ProductImage
+                    images={item.productImages}
+                    name={item.productName}
+                    className="h-full w-full object-cover animate-slow-spin"
+                  />
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <p className="font-display text-2xl text-brand-text">{productDisplayName(item.productName ?? "")}</p>
+                  <p className="text-sm text-muted-foreground">
+                    ${(item.unitPriceSnapshotCents / 100).toFixed(2)} each
+                  </p>
+                  {item.itemNote && (
+                    <p className="text-xs text-muted-foreground italic">Note: {item.itemNote}</p>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    await updateItem({ cartItemId: item._id, qty: Math.max(1, item.qty - 1) });
-                  }}
-                >
-                  -
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    await updateItem({ cartItemId: item._id, qty: item.qty + 1 });
-                  }}
-                >
-                  +
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={async () => {
-                    await removeItem({ cartItemId: item._id });
-                  }}
-                >
-                  Remove
-                </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9 rounded-xl transition-all active:scale-95"
+                    onClick={async () => {
+                      await updateItem({ cartItemId: item._id, qty: Math.max(1, item.qty - 1) });
+                    }}
+                  >
+                    -
+                  </Button>
+                  <span className="w-8 text-center text-sm font-medium tabular-nums">
+                    {item.qty}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9 rounded-xl transition-all active:scale-95"
+                    onClick={async () => {
+                      await updateItem({ cartItemId: item._id, qty: item.qty + 1 });
+                    }}
+                  >
+                    +
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="rounded-full"
+                    asChild
+                  >
+                    <Link href={`/products/${item.productId}?cartItemId=${item._id}`}>Modify</Link>
+                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="rounded-full"
+                      >
+                        Remove
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent className="rounded-2xl">
+                      <AlertDialogHeader>
+                        <AlertDialogTitle className="font-display text-2xl text-brand-text">Remove item?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Are you sure you want to remove <span className="font-medium">{productDisplayName(item.productName ?? "")}</span> from your order? This can&apos;t be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel className="rounded-full">Keep it</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          onClick={async () => {
+                            await removeItem({ cartItemId: item._id });
+                          }}
+                        >
+                          Yes, remove
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
               </div>
             </CardContent>
           </Card>
         ))}
+
+        <Button variant="outline" asChild className="w-fit rounded-full transition-all duration-200 active:scale-[0.97]">
+          <Link href="/products">Add more cakes</Link>
+        </Button>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <Card>
+        <Card className="rounded-2xl">
           <CardHeader>
-            <CardTitle>Coupon</CardTitle>
-            <CardDescription>Coupon engine deep validation comes in PRM tasks.</CardDescription>
+            <CardTitle className="font-display text-2xl text-brand-text">Coupon</CardTitle>
+            <CardDescription>Apply a discount code to your order</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="space-y-2">
-              <Label htmlFor="coupon">Code</Label>
-              <Input
-                id="coupon"
-                value={couponCode}
-                onChange={(event) => setCouponCode(event.target.value)}
-                placeholder="WELCOME10"
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button
-                onClick={async () => {
+            <form
+              className="space-y-3"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setCouponMessage(null);
+                if (!couponCode.trim()) {
+                  setCouponMessage({ text: "Please enter a coupon code.", error: true });
+                  return;
+                }
+                try {
                   await applyCoupon({ cartId: cart._id, code: couponCode });
+                  setCouponMessage({ text: "Coupon applied!", error: false });
                   setCouponCode("");
-                }}
-              >
+                } catch (err) {
+                  setCouponMessage({
+                    text: err instanceof Error ? err.message : "Invalid coupon code.",
+                    error: true,
+                  });
+                }
+              }}
+            >
+              <div className="space-y-2">
+                <Label htmlFor="coupon">Code</Label>
+                <Input
+                  id="coupon"
+                  className="rounded-xl"
+                  value={couponCode}
+                  onChange={(event) => setCouponCode(event.target.value)}
+                  placeholder="WELCOME10"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  type="submit"
+                  className="rounded-full bg-button text-stone-50 hover:bg-button-hover transition-all active:scale-[0.97]"
+                >
                 Apply
               </Button>
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  await removeCoupon({ cartId: cart._id });
-                }}
-              >
-                Remove
-              </Button>
+              {cart.appliedCouponCode && (
+                <Button
+                  variant="outline"
+                  className="rounded-full border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                  onClick={async () => {
+                    await removeCoupon({ cartId: cart._id });
+                    setCouponMessage({ text: "Coupon removed.", error: false });
+                  }}
+                >
+                  &times; Remove coupon
+                </Button>
+              )}
             </div>
-            <Badge variant="outline">
-              Current: {cart.appliedCouponCode ?? "none"}
-            </Badge>
+            {couponMessage && (
+              <p className={`text-sm ${couponMessage.error ? "text-red-600" : "text-green-600"}`}>
+                {couponMessage.text}
+              </p>
+            )}
+            {cart.appliedCouponCode && (
+              <Badge variant="outline" className="rounded-full bg-green-50 text-green-700 border-green-200">
+                Applied: {cart.appliedCouponCode}
+              </Badge>
+            )}
+            </form>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="rounded-2xl">
           <CardHeader>
-            <CardTitle>Tip</CardTitle>
-            <CardDescription>Set tip in cents (PAY-002).</CardDescription>
+            <CardTitle className="font-display text-2xl text-brand-text">Tip</CardTitle>
+            <CardDescription>Add a tip to your order.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-2">
-              <Label htmlFor="tip">Tip cents</Label>
+              <Label htmlFor="tip">Tip ($)</Label>
               <Input
                 id="tip"
                 type="number"
+                step="0.01"
+                className="rounded-xl"
                 value={tipInput}
                 onChange={(event) => setTipInput(event.target.value)}
               />
             </div>
-            <Button
-              onClick={async () => {
-                await setTip({
-                  cartId: cart._id,
-                  amount: Number(tipInput),
-                });
-              }}
-            >
-              Save tip
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                className="rounded-full bg-button text-stone-50 hover:bg-button-hover transition-all active:scale-[0.97]"
+                onClick={async () => {
+                  await setTip({
+                    cartId: cart._id,
+                    amount: Math.round(Number(tipInput) * 100),
+                  });
+                }}
+              >
+                Save tip
+              </Button>
+              {cart.tipCents > 0 && (
+                <Button
+                  variant="outline"
+                  className="rounded-full border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                  onClick={async () => {
+                    await setTip({ cartId: cart._id, amount: 0 });
+                    setTipInput("0.00");
+                  }}
+                >
+                  &times; Remove tip
+                </Button>
+              )}
+            </div>
           </CardContent>
         </Card>
       </section>
 
       {totals ? (
-        <Card>
+        <Card className="animate-fade-in-up stagger-3 rounded-2xl">
           <CardHeader>
-            <CardTitle>Totals</CardTitle>
-            <CardDescription>Computed server-side from pricing snapshot rules.</CardDescription>
+            <CardTitle className="font-display text-2xl text-brand-text">Order Summary</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-2 text-sm">
-            <p>Subtotal: {totals.subtotalCents} cents</p>
-            <p>Discounts: {totals.discountCents} cents</p>
-            <p>Delivery fee: {totals.deliveryFeeCents} cents</p>
-            <p>Shipping fee: {totals.shippingFeeCents} cents</p>
-            <p>Tip: {totals.tipCents} cents</p>
-            <p>Tax (stored): {totals.taxCents} cents</p>
-            <p className="text-base font-semibold">Total: {totals.totalCents} cents</p>
+          <CardContent className="space-y-3">
+            <div className="grid gap-1.5 text-sm">
+              <div className="flex justify-between">
+                <span>Subtotal</span>
+                <span>${(totals.subtotalCents / 100).toFixed(2)}</span>
+              </div>
+              {totals.discountCents > 0 && (
+                <div className="flex justify-between text-green-600">
+                  <span>Discount</span>
+                  <span>-${(totals.discountCents / 100).toFixed(2)}</span>
+                </div>
+              )}
+              {totals.deliveryFeeCents > 0 && (
+                <div className="flex justify-between">
+                  <span>Delivery fee</span>
+                  <span>${(totals.deliveryFeeCents / 100).toFixed(2)}</span>
+                </div>
+              )}
+              {totals.shippingFeeCents > 0 && (
+                <div className="flex justify-between">
+                  <span>Shipping fee</span>
+                  <span>${(totals.shippingFeeCents / 100).toFixed(2)}</span>
+                </div>
+              )}
+              {totals.tipCents > 0 && (
+                <div className="flex justify-between">
+                  <span>Tip</span>
+                  <span>${(totals.tipCents / 100).toFixed(2)}</span>
+                </div>
+              )}
+              {totals.taxCents > 0 && (
+                <div className="flex justify-between">
+                  <span>Tax</span>
+                  <span>${(totals.taxCents / 100).toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t pt-2 text-base font-semibold">
+                <span>Total</span>
+                <span>${(totals.totalCents / 100).toFixed(2)}</span>
+              </div>
+            </div>
+            <Button asChild className="w-full rounded-full bg-button text-stone-50 hover:bg-button-hover transition-all duration-200 active:scale-[0.97]" size="lg">
+              <Link href="/checkout">Proceed to checkout</Link>
+            </Button>
           </CardContent>
         </Card>
       ) : null}

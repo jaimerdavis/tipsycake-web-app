@@ -1,5 +1,18 @@
 import { mutation, query } from "./_generated/server";
+import type { QueryCtx, MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
+
+async function resolveOwner(
+  ctx: QueryCtx | MutationCtx,
+  guestSessionId?: string
+): Promise<string | null> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (identity && typeof identity === "object" && identity !== null) {
+    const tokenIdentifier = (identity as { tokenIdentifier?: string }).tokenIdentifier;
+    if (tokenIdentifier) return tokenIdentifier;
+  }
+  return guestSessionId ?? null;
+}
 
 export const getAddressById = query({
   args: { addressId: v.id("addresses") },
@@ -10,13 +23,14 @@ export const getAddressById = query({
 
 export const listAddresses = query({
   args: {
-    ownerId: v.optional(v.string()),
+    guestSessionId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    if (!args.ownerId) return [];
+    const ownerId = await resolveOwner(ctx, args.guestSessionId);
+    if (!ownerId) return [];
     return await ctx.db
       .query("addresses")
-      .withIndex("by_owner", (q) => q.eq("ownerId", args.ownerId))
+      .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
       .collect();
   },
 });
@@ -36,10 +50,30 @@ export const createAddress = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const ownerId = await resolveOwner(ctx, args.ownerId ?? undefined) ?? args.ownerId;
+    if (!ownerId) throw new Error("Owner required");
+    const { ownerId: _omit, ...rest } = args;
     return await ctx.db.insert("addresses", {
-      ...args,
+      ...rest,
+      ownerId,
       createdAt: Date.now(),
     });
+  },
+});
+
+export const deleteAddress = mutation({
+  args: {
+    addressId: v.id("addresses"),
+    guestSessionId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const ownerId = await resolveOwner(ctx, args.guestSessionId);
+    if (!ownerId) throw new Error("Not authorized");
+    const addr = await ctx.db.get(args.addressId);
+    if (!addr) throw new Error("Address not found");
+    if (addr.ownerId !== ownerId) throw new Error("Not your address");
+    await ctx.db.delete(args.addressId);
+    return { deleted: args.addressId };
   },
 });
 

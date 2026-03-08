@@ -10,6 +10,7 @@ alwaysApply: true
 - Restate requirement IDs from `SPEC.md` (for example `SCH-009`, `INV-001`).
 - List exact files to change.
 - State whether change touches risky domains: `SCH`, `PAY`, `PRM`, `LOY`, `RBAC`, pricing.
+- **Product scope check:** If the task touches products, catalog, or marketing copy, ensure it does not introduce cupcakes, custom cakes, or specialty items. TheTipsyCake sells only the strict list of bundt cakes from the catalog.
 
 If any requirement ID is missing, stop and ask for clarification.
 
@@ -18,6 +19,14 @@ If any requirement ID is missing, stop and ask for clarification.
 - Provide: requirement IDs implemented, files changed, tests run, remaining risks.
 - Include explicit "not implemented" items if anything from requested IDs is deferred.
 - Include rollback note: how to revert safely if deploy fails.
+
+## API Integration Checklist
+
+When adding a **new API, service, or env var** that admins configure:
+
+1. **Settings UI**: Add to `PUBLIC_KEY_FIELDS` in [storefront/src/app/admin/settings/page.tsx](storefront/src/app/admin/settings/page.tsx) if it's a public key, or document the env var in `.env.example`.
+2. **Verify connections**: Add to `SERVER_ENV_KEYS` and implement a `verify*` function in [storefront/convex/admin/settings.ts](storefront/convex/admin/settings.ts) so Admin → Settings → "Verify connections" can validate it.
+3. **useSiteSettings**: Add fallback in [storefront/src/hooks/useSiteSettings.ts](storefront/src/hooks/useSiteSettings.ts) if the key is read client-side via `get()`.
 
 ## Hard Stop Conditions
 

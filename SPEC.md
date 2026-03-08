@@ -29,6 +29,12 @@
 * Peak daily orders: ~10–20/day.
 * Returns/exchanges: **not supported**.
 
+### Product scope
+
+* Bundt cakes only. No cupcakes, no other dessert types.
+* No custom cakes or specialty orders.
+* Catalog is the strict, admin-defined list of products.
+
 ---
 
 ## 1) AI development rules (non-negotiable)

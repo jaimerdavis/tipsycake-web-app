@@ -53,10 +53,19 @@ const roleValidator = v.union(
 
 export default defineSchema({
   products: defineTable({
+    productCode: v.optional(v.string()),
     name: v.string(),
     slug: v.string(),
     description: v.string(),
     images: v.array(v.string()),
+    shapeImages: v.optional(
+      v.object({
+        mixed: v.optional(v.array(v.string())),
+        even20: v.optional(v.array(v.string())),
+        rose: v.optional(v.array(v.string())),
+        blossom: v.optional(v.array(v.string())),
+      })
+    ),
     status: v.union(v.literal("active"), v.literal("hidden")),
     categories: v.array(v.string()),
     tags: v.array(v.string()),
@@ -73,7 +82,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_slug", ["slug"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    .index("by_productCode", ["productCode"]),
 
   productVariants: defineTable({
     productId: v.id("products"),
@@ -87,8 +97,10 @@ export default defineSchema({
     .index("by_product_label", ["productId", "label"]),
 
   modifierGroups: defineTable({
-    productId: v.id("products"),
+    /** When undefined, group is global (applies to all products). */
+    productId: v.optional(v.id("products")),
     name: v.string(),
+    description: v.optional(v.string()),
     required: v.boolean(),
     minSelect: v.number(),
     maxSelect: v.number(),
@@ -213,6 +225,10 @@ export default defineSchema({
     enabled: v.boolean(),
     effectiveFrom: v.string(),
     createdAt: v.number(),
+    /** Optional: static slot start times (HH:mm). When set, these override storeHours for slot generation. */
+    slotTimes: v.optional(v.array(v.string())),
+    /** Default max orders per slot when not in slotCapacities. */
+    defaultMaxOrdersPerSlot: v.optional(v.number()),
   })
     .index("by_enabled", ["enabled"])
     .index("by_effectiveFrom", ["effectiveFrom"]),
@@ -307,6 +323,7 @@ export default defineSchema({
 
   orders: defineTable({
     orderNumber: v.string(),
+    cartId: v.optional(v.id("carts")),
     userId: v.optional(v.id("users")),
     guestToken: v.string(),
     status: v.string(),
@@ -336,7 +353,10 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_orderNumber", ["orderNumber"])
+    .index("by_cartId", ["cartId"])
     .index("by_guestToken", ["guestToken"])
+    .index("by_userId", ["userId"])
+    .index("by_contactEmail", ["contactEmail"])
     .index("by_status", ["status"])
     .index("by_paymentIntentId", ["paymentIntentId"]),
 
@@ -433,6 +453,12 @@ export default defineSchema({
     .index("by_account", ["accountId"])
     .index("by_order", ["orderId"]),
 
+  bonusClaims: defineTable({
+    userId: v.id("users"),
+    bonusType: v.union(v.literal("signup"), v.literal("share")),
+    claimedAt: v.number(),
+  }).index("by_user_type", ["userId", "bonusType"]),
+
   drivers: defineTable({
     userId: v.optional(v.id("users")),
     name: v.string(),
@@ -467,4 +493,33 @@ export default defineSchema({
     storageId: v.string(),
     createdAt: v.number(),
   }).index("by_assignment", ["assignmentId"]),
+
+  siteSettings: defineTable({
+    key: v.string(),
+    value: v.string(),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  notificationLogs: defineTable({
+    channel: v.union(v.literal("email"), v.literal("sms")),
+    to: v.string(),
+    subject: v.optional(v.string()),
+    template: v.optional(v.string()),
+    status: v.union(v.literal("sent"), v.literal("skipped"), v.literal("error")),
+    errorMessage: v.optional(v.string()),
+    externalId: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_createdAt", ["createdAt"])
+    .index("by_channel", ["channel"]),
+
+  mediaLibrary: defineTable({
+    storageId: v.string(),
+    filename: v.string(),
+    contentType: v.string(),
+    size: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_createdAt", ["createdAt"])
+    .index("by_storageId", ["storageId"]),
 });

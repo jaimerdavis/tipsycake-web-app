@@ -86,6 +86,17 @@ export const updateCoupon = mutation({
   },
 });
 
+export const deleteCoupon = mutation({
+  args: { couponId: v.id("coupons") },
+  handler: async (ctx, args) => {
+    await requireRole(ctx, "admin", "manager");
+    const existing = await ctx.db.get(args.couponId);
+    if (!existing) throw new Error("Coupon not found");
+    await ctx.db.delete(args.couponId);
+    return args.couponId;
+  },
+});
+
 export const listCoupons = query({
   args: {},
   handler: async (ctx) => {

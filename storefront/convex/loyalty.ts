@@ -1,10 +1,29 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
-import { getCurrentUser, requireRole } from "./lib/auth";
+import { getCurrentUser, getCurrentUserOrNull, requireRole } from "./lib/auth";
+import {
+  POINTS_PER_ORDER,
+  REDEEM_POINTS_PER_DOLLAR,
+  SIGNUP_BONUS_POINTS,
+  SHARE_BONUS_POINTS,
+} from "./lib/loyaltyConstants";
 
-const REDEEM_POINTS_PER_DOLLAR = 100;
-const EARN_POINTS_PER_DOLLAR = 1;
+/** Returns whether the current user has claimed the share bonus. Null when not authenticated. */
+export const getShareBonusClaimed = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUserOrNull(ctx);
+    if (!user) return null;
+    const existing = await ctx.db
+      .query("bonusClaims")
+      .withIndex("by_user_type", (q) =>
+        q.eq("userId", user._id).eq("bonusType", "share")
+      )
+      .unique();
+    return existing !== null;
+  },
+});
 
 export const getMyAccount = query({
   args: {},
@@ -131,8 +150,7 @@ export const awardPointsForOrder = internalMutation({
       .unique();
     if (!account) return { awarded: 0 };
 
-    const points = Math.floor((args.earnBaseCents / 100) * EARN_POINTS_PER_DOLLAR);
-    if (points <= 0) return { awarded: 0 };
+    const points = POINTS_PER_ORDER;
 
     const now = Date.now();
     await ctx.db.patch(account._id, {
@@ -147,6 +165,104 @@ export const awardPointsForOrder = internalMutation({
       createdAt: now,
     });
     return { awarded: points };
+  },
+});
+
+/** Internal: award 250 points to new user on first sync. Idempotent via bonusClaims. */
+export const awardSignupBonus = internalMutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("bonusClaims")
+      .withIndex("by_user_type", (q) =>
+        q.eq("userId", args.userId).eq("bonusType", "signup")
+      )
+      .unique();
+    if (existing) return { awarded: 0 };
+
+    let account = await ctx.db
+      .query("loyaltyAccounts")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .unique();
+    if (!account) {
+      const now = Date.now();
+      const accountId = await ctx.db.insert("loyaltyAccounts", {
+        userId: args.userId,
+        pointsBalance: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      account = (await ctx.db.get(accountId))!;
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(account._id, {
+      pointsBalance: account.pointsBalance + SIGNUP_BONUS_POINTS,
+      updatedAt: now,
+    });
+    await ctx.db.insert("pointsLedger", {
+      accountId: account._id,
+      type: "earn",
+      points: SIGNUP_BONUS_POINTS,
+      note: "Signup bonus",
+      createdAt: now,
+    });
+    await ctx.db.insert("bonusClaims", {
+      userId: args.userId,
+      bonusType: "signup",
+      claimedAt: now,
+    });
+    return { awarded: SIGNUP_BONUS_POINTS };
+  },
+});
+
+/** User-visible: claim 500 points for sharing. One-time per user. */
+export const claimShareBonus = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUser(ctx);
+
+    const existing = await ctx.db
+      .query("bonusClaims")
+      .withIndex("by_user_type", (q) =>
+        q.eq("userId", user._id).eq("bonusType", "share")
+      )
+      .unique();
+    if (existing) throw new Error("Share bonus already claimed");
+
+    let account = await ctx.db
+      .query("loyaltyAccounts")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .unique();
+    if (!account) {
+      const now = Date.now();
+      const accountId = await ctx.db.insert("loyaltyAccounts", {
+        userId: user._id,
+        pointsBalance: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      account = (await ctx.db.get(accountId))!;
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(account._id, {
+      pointsBalance: account.pointsBalance + SHARE_BONUS_POINTS,
+      updatedAt: now,
+    });
+    await ctx.db.insert("pointsLedger", {
+      accountId: account._id,
+      type: "earn",
+      points: SHARE_BONUS_POINTS,
+      note: "Share bonus",
+      createdAt: now,
+    });
+    await ctx.db.insert("bonusClaims", {
+      userId: user._id,
+      bonusType: "share",
+      claimedAt: now,
+    });
+    return { awarded: SHARE_BONUS_POINTS };
   },
 });
 

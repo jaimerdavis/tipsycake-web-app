@@ -20,12 +20,12 @@ import {
 import { useState } from "react";
 
 const ENTITY_TYPES = [
-  "all",
-  "users",
-  "coupons",
-  "scheduling",
-  "deliveryTiers",
-  "loyaltyLedger",
+  { value: "all", label: "All" },
+  { value: "users", label: "Users" },
+  { value: "coupons", label: "Coupons" },
+  { value: "scheduling", label: "Scheduling" },
+  { value: "deliveryTiers", label: "Delivery Pricing" },
+  { value: "loyaltyLedger", label: "Loyalty" },
 ] as const;
 
 export default function AuditLogsPage() {
@@ -36,7 +36,7 @@ export default function AuditLogsPage() {
   });
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 px-4 py-6 sm:px-6">
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Audit Logs</h1>
@@ -51,8 +51,8 @@ export default function AuditLogsPage() {
           </SelectTrigger>
           <SelectContent>
             {ENTITY_TYPES.map((t) => (
-              <SelectItem key={t} value={t}>
-                {t === "all" ? "All entities" : t}
+              <SelectItem key={t.value} value={t.value}>
+                {t.value === "all" ? "All entities" : t.label}
               </SelectItem>
             ))}
           </SelectContent>

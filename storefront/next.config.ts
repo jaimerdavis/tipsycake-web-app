@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 import path from "path";
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- PWA uses CommonJS
+const withPWAInit = require("@ducanh2912/next-pwa").default;
+const withPWA = withPWAInit({ dest: "public" });
+
 const nextConfig: NextConfig = {
   typescript: {
     // Convex generates proper types at deploy time via `npx convex deploy`.
@@ -19,4 +23,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withPWA(nextConfig);

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
+import type { Id } from "../../../../convex/_generated/dataModel";
 
 import { api } from "../../../../convex/_generated/api";
 import { Badge } from "@/components/ui/badge";
@@ -9,17 +10,29 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 export default function AdminDriversPage() {
   const drivers = useQuery(api.admin.drivers.list);
   const createDriver = useMutation(api.admin.drivers.create);
+  const updateDriver = useMutation(api.admin.drivers.update);
   const setDriverActive = useMutation(api.admin.drivers.setActive);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [editingDriver, setEditingDriver] = useState<{ _id: Id<"drivers">; name: string; phone: string } | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
 
   return (
-    <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-6">
+    <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6">
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">Admin Drivers</h1>
         <p className="text-sm text-muted-foreground">Create and activate driver records.</p>
@@ -76,6 +89,17 @@ export default function AdminDriversPage() {
                 <Button
                   size="sm"
                   variant="outline"
+                  onClick={() => {
+                    setEditingDriver(driver);
+                    setEditName(driver.name);
+                    setEditPhone(driver.phone);
+                  }}
+                >
+                  Edit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
                   onClick={() => setDriverActive({ driverId: driver._id, active: !driver.active })}
                 >
                   Toggle
@@ -85,6 +109,62 @@ export default function AdminDriversPage() {
           ))}
         </CardContent>
       </Card>
+
+      <Sheet open={!!editingDriver} onOpenChange={(open) => !open && setEditingDriver(null)}>
+        <SheetContent>
+          <SheetHeader>
+            <SheetTitle>Edit driver</SheetTitle>
+            <SheetDescription>Update name and phone.</SheetDescription>
+          </SheetHeader>
+          {editingDriver && (
+            <div className="flex flex-col gap-4 px-6 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-name">Name</Label>
+                <Input
+                  id="edit-name"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-phone">Phone</Label>
+                <Input
+                  id="edit-phone"
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+          <SheetFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEditingDriver(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={!editingDriver}
+              onClick={async () => {
+                if (!editingDriver) return;
+                try {
+                  await updateDriver({
+                    driverId: editingDriver._id,
+                    name: editName,
+                    phone: editPhone,
+                  });
+                  setEditingDriver(null);
+                  setMessage("Driver updated.");
+                } catch (error) {
+                  setMessage(error instanceof Error ? error.message : "Update failed");
+                }
+              }}
+            >
+              Save
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
     </main>
   );
 }

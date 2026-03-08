@@ -1,0 +1,28 @@
+{
+  "name": "TheTipsyCake — Handcrafted Cakes",
+  "short_name": "TipsyCake",
+  "description": "Order handcrafted bundt cakes for pickup, delivery, or shipping.",
+  "start_url": "/products",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#e92486",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    { "name": "Menu", "url": "/products", "short_name": "Menu" },
+    { "name": "Cart", "url": "/cart", "short_name": "Cart" }
+  ]
+}

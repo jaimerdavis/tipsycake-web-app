@@ -1,0 +1,14 @@
+/**
+ * Centralized store config. Single source for values used across maps, checkout, etc.
+ * Override via siteSettings in the future if needed.
+ */
+
+/**
+ * Default base URL for the order app (storefront + admin at order.tipsycake.com).
+ * Used when siteSettings.siteUrl or NEXT_PUBLIC_SITE_URL is not set.
+ * All email links (admin, order tracking, cart) must use this or the configured value — never invented or placeholder URLs.
+ */
+export const DEFAULT_SITE_URL = "https://order.tipsycake.com";
+
+/** Store lat/lng for distance calculation (Lauderhill FL). */
+export const STORE_ORIGIN = { lat: 26.139, lng: -80.216 };

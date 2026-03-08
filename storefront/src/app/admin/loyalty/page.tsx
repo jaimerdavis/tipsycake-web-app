@@ -21,7 +21,7 @@ export default function AdminLoyaltyPage() {
   });
 
   return (
-    <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-6">
+    <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6">
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">Admin Loyalty</h1>
         <p className="text-sm text-muted-foreground">

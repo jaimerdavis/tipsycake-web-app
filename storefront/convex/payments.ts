@@ -4,6 +4,7 @@ import { action, internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import Stripe from "stripe";
 import { api, internal } from "./_generated/api";
+import { REDEEM_POINTS_PER_DOLLAR } from "./lib/loyaltyConstants";
 
 interface CartItem {
   productId: string;
@@ -83,7 +84,6 @@ export const createStripeSession = action({
       }
     }
 
-    const REDEEM_POINTS_PER_DOLLAR = 100;
     const loyaltyDiscountCents = cart.appliedLoyaltyPoints
       ? Math.floor((cart.appliedLoyaltyPoints / REDEEM_POINTS_PER_DOLLAR) * 100)
       : 0;
@@ -222,7 +222,6 @@ export const createPaymentIntent = action({
       }
     }
 
-    const REDEEM_POINTS_PER_DOLLAR = 100;
     const loyaltyDiscountCents = cart.appliedLoyaltyPoints
       ? Math.floor((cart.appliedLoyaltyPoints / REDEEM_POINTS_PER_DOLLAR) * 100)
       : 0;
@@ -319,7 +318,6 @@ export const createPayPalOrder = action({
       }
     }
 
-    const REDEEM_POINTS_PER_DOLLAR = 100;
     const loyaltyDiscountCents = cart.appliedLoyaltyPoints
       ? Math.floor((cart.appliedLoyaltyPoints / REDEEM_POINTS_PER_DOLLAR) * 100)
       : 0;

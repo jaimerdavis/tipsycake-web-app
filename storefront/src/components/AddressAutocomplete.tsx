@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
+import { useSiteSettings } from "@/hooks/useSiteSettings";
 
 interface AddressResult {
   formatted: string;
@@ -18,38 +19,6 @@ interface AddressResult {
 interface AddressAutocompleteProps {
   onSelect: (address: AddressResult) => void;
   placeholder?: string;
-}
-
-declare global {
-  interface Window {
-    google?: {
-      maps: {
-        places: {
-          Autocomplete: new (
-            input: HTMLInputElement,
-            options?: {
-              types?: string[];
-              componentRestrictions?: { country: string };
-              fields?: string[];
-            }
-          ) => {
-            addListener: (event: string, callback: () => void) => void;
-            getPlace: () => {
-              formatted_address?: string;
-              place_id?: string;
-              geometry?: { location: { lat: () => number; lng: () => number } };
-              address_components?: Array<{
-                types: string[];
-                long_name: string;
-                short_name: string;
-              }>;
-            };
-          };
-        };
-      };
-    };
-    initGooglePlaces?: () => void;
-  }
 }
 
 function parseAddressComponents(
@@ -84,15 +53,12 @@ export function AddressAutocomplete({
   const inputRef = useRef<HTMLInputElement>(null);
   const initializedRef = useRef(false);
   const onSelectRef = useRef(onSelect);
+  const { get } = useSiteSettings();
+  const apiKey = get("googleMapsClientKey");
 
   useEffect(() => {
     onSelectRef.current = onSelect;
   });
-
-  const apiKeyAvailable = useMemo(
-    () => !!process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY,
-    []
-  );
 
   const initAutocomplete = useCallback(() => {
     if (initializedRef.current) return;
@@ -130,7 +96,7 @@ export function AddressAutocomplete({
   }, []);
 
   useEffect(() => {
-    if (!apiKeyAvailable) return;
+    if (!apiKey) return;
 
     if (window.google?.maps?.places) {
       initAutocomplete();
@@ -145,9 +111,8 @@ export function AddressAutocomplete({
       'script[src*="maps.googleapis.com/maps/api/js"]'
     );
     if (!existingScript) {
-      const key = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
       const script = document.createElement("script");
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places&callback=initGooglePlaces`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&callback=initGooglePlaces`;
       script.async = true;
       script.defer = true;
       document.head.appendChild(script);
@@ -156,9 +121,9 @@ export function AddressAutocomplete({
     return () => {
       delete window.initGooglePlaces;
     };
-  }, [initAutocomplete, apiKeyAvailable]);
+  }, [initAutocomplete, apiKey]);
 
-  if (!apiKeyAvailable) {
+  if (!apiKey) {
     return (
       <p className="text-xs text-muted-foreground">
         Google Maps API key not configured. Use manual address entry below.

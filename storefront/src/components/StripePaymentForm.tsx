@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import {
   Elements,
@@ -13,18 +13,16 @@ import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Id } from "../../convex/_generated/dataModel";
-
-const stripePromise = loadStripe(
-  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? ""
-);
+import { useSiteSettings } from "@/hooks/useSiteSettings";
 
 interface PaymentFormInnerProps {
+  cartId: Id<"carts">;
   onSuccess: () => void;
   onError: (message: string) => void;
   amount: number;
 }
 
-function PaymentFormInner({ onSuccess, onError, amount }: PaymentFormInnerProps) {
+function PaymentFormInner({ cartId, onSuccess, onError, amount }: PaymentFormInnerProps) {
   const stripe = useStripe();
   const elements = useElements();
   const [processing, setProcessing] = useState(false);
@@ -41,7 +39,7 @@ function PaymentFormInner({ onSuccess, onError, amount }: PaymentFormInnerProps)
       const { error } = await stripe.confirmPayment({
         elements,
         confirmParams: {
-          return_url: `${window.location.origin}/checkout?status=success`,
+          return_url: `${window.location.origin}/checkout?status=success&cartId=${cartId}`,
         },
         redirect: "if_required",
       });
@@ -58,7 +56,7 @@ function PaymentFormInner({ onSuccess, onError, amount }: PaymentFormInnerProps)
         onSuccess();
       }
     },
-    [stripe, elements, onSuccess, onError]
+    [stripe, elements, cartId, onSuccess, onError]
   );
 
   return (
@@ -96,6 +94,14 @@ export function StripePaymentForm({
   onSuccess,
   onError,
 }: StripePaymentFormProps) {
+  const { get } = useSiteSettings();
+  const stripeKey = get("stripePublishableKey");
+
+  const stripePromise = useMemo(
+    () => (stripeKey ? loadStripe(stripeKey) : null),
+    [stripeKey]
+  );
+
   const createPaymentIntent = useAction(api.payments.createPaymentIntent);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [amount, setAmount] = useState(0);
@@ -117,6 +123,21 @@ export function StripePaymentForm({
       setLoading(false);
     }
   }, [cartId, guestSessionId, createPaymentIntent, onError]);
+
+  if (!stripeKey) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Payment</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            Stripe is not configured yet. Add the publishable key in Admin &rarr; Settings.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (!clientSecret) {
     return (
@@ -155,6 +176,7 @@ export function StripePaymentForm({
           }}
         >
           <PaymentFormInner
+            cartId={cartId}
             onSuccess={onSuccess}
             onError={onError}
             amount={amount}

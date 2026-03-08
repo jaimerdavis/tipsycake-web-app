@@ -28,6 +28,23 @@ export const create = mutation({
   },
 });
 
+export const update = mutation({
+  args: {
+    driverId: v.id("drivers"),
+    name: v.string(),
+    phone: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await requireRole(ctx, "admin", "manager", "dispatcher");
+    await ctx.db.patch(args.driverId, {
+      name: args.name,
+      phone: args.phone,
+      updatedAt: Date.now(),
+    });
+    return args.driverId;
+  },
+});
+
 export const setActive = mutation({
   args: {
     driverId: v.id("drivers"),

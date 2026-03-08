@@ -1,5 +1,6 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { requireRole } from "./lib/auth";
 
@@ -128,11 +129,43 @@ export const getSlots = query({
     const now = new Date();
     const targetDate = new Date(`${args.date}T00:00:00`);
     const dayKey = weekdayKey(targetDate);
-    const windows = ((rules.storeHours as Record<string, Array<{ start: string; end: string }>>)[dayKey] ??
-      []) as Array<{ start: string; end: string }>;
+    const staticTimes = rules.slotTimes as string[] | undefined;
+    const defaultMax = (rules.defaultMaxOrdersPerSlot as number | undefined) ?? 999;
 
-    if (windows.length === 0) {
-      return { available: [], blocked: [{ slotStart: "00:00", reason: "CLOSED" }] };
+    // Build slot start times: use static slotTimes if set, else derive from store hours
+    let slotStarts: string[] = [];
+    if (staticTimes && staticTimes.length > 0) {
+      for (const t of staticTimes) {
+        const trimmed = t.trim();
+        if (/^\d{1,2}:\d{2}$/.test(trimmed)) {
+          const [h, m] = trimmed.split(":").map(Number);
+          slotStarts.push(`${pad2(h)}:${pad2(m)}`);
+        }
+      }
+      slotStarts = [...new Set(slotStarts)].sort();
+    } else {
+      const windows = ((rules.storeHours as Record<string, Array<{ start: string; end: string }>>)[dayKey] ??
+        []) as Array<{ start: string; end: string }>;
+      if (windows.length === 0) {
+        return { available: [], blocked: [{ slotStart: "00:00", reason: "CLOSED" }], selectedSlotKey: null };
+      }
+      const dur = args.mode === "pickup"
+        ? rules.slotDurationMinutesByMode.pickup
+        : args.mode === "delivery"
+          ? rules.slotDurationMinutesByMode.delivery
+          : rules.slotDurationMinutesByMode.shipping;
+      for (const window of windows) {
+        let cursor = combineDateAndHm(targetDate, window.start);
+        const end = combineDateAndHm(targetDate, window.end);
+        while (cursor < end) {
+          slotStarts.push(`${pad2(cursor.getHours())}:${pad2(cursor.getMinutes())}`);
+          cursor = new Date(cursor.getTime() + dur * 60 * 1000);
+        }
+      }
+    }
+
+    if (slotStarts.length === 0) {
+      return { available: [], blocked: [{ slotStart: "00:00", reason: "CLOSED" }], selectedSlotKey: null };
     }
 
     const leadHours = await computeCartLeadTimeHours(ctx, args.cartId as unknown as string, {
@@ -163,59 +196,67 @@ export const getSlots = query({
     const cutoff = cutoffByDay?.[args.mode];
     const cutoffMoment = cutoff ? combineDateAndHm(targetDate, cutoff) : null;
 
-    for (const window of windows) {
-      let cursor = combineDateAndHm(targetDate, window.start);
-      const end = combineDateAndHm(targetDate, window.end);
+    for (const slotStart of slotStarts) {
+      const cursor = combineDateAndHm(targetDate, slotStart);
+      const slotEndDate = new Date(cursor.getTime() + durationMinutes * 60 * 1000);
+      const slotEnd = `${pad2(slotEndDate.getHours())}:${pad2(slotEndDate.getMinutes())}`;
+      const key = slotKey(args.date, slotStart, args.mode);
 
-      while (cursor < end) {
-        const slotStart = `${pad2(cursor.getHours())}:${pad2(cursor.getMinutes())}`;
-        const slotEndDate = new Date(cursor.getTime() + durationMinutes * 60 * 1000);
-        const slotEnd = `${pad2(slotEndDate.getHours())}:${pad2(slotEndDate.getMinutes())}`;
-        const key = slotKey(args.date, slotStart, args.mode);
+      if (cursor < earliestAllowed) {
+        blocked.push({ slotStart, reason: "LEAD_TIME" });
+        continue;
+      }
 
-        if (cursor < earliestAllowed) {
-          blocked.push({ slotStart, reason: "LEAD_TIME" });
-          cursor = new Date(cursor.getTime() + durationMinutes * 60 * 1000);
-          continue;
-        }
+      if (cutoffMoment && now > cutoffMoment && args.date === dateToYmd(now)) {
+        blocked.push({ slotStart, reason: "CUTOFF" });
+        continue;
+      }
 
-        if (cutoffMoment && now > cutoffMoment && args.date === dateToYmd(now)) {
-          blocked.push({ slotStart, reason: "CUTOFF" });
-          cursor = new Date(cursor.getTime() + durationMinutes * 60 * 1000);
-          continue;
-        }
+      const capacity = await ctx.db
+        .query("slotCapacities")
+        .withIndex("by_slotKey", (q) => q.eq("slotKey", key))
+        .unique();
 
-        const capacity = await ctx.db
-          .query("slotCapacities")
-          .withIndex("by_slotKey", (q) => q.eq("slotKey", key))
-          .unique();
+      const activeHolds = await ctx.db
+        .query("slotHolds")
+        .withIndex("by_slotKey", (q) => q.eq("slotKey", key))
+        .collect();
 
-        const activeHolds = await ctx.db
-          .query("slotHolds")
-          .withIndex("by_slotKey", (q) => q.eq("slotKey", key))
-          .collect();
+      const heldCount = activeHolds.filter(
+        (hold) => hold.status === "held" && hold.expiresAt > Date.now()
+      ).length;
 
-        const heldCount = activeHolds.filter(
-          (hold) => hold.status === "held" && hold.expiresAt > Date.now()
-        ).length;
+      const bookings = await ctx.db
+        .query("slotBookings")
+        .withIndex("by_slotKey", (q) => q.eq("slotKey", key))
+        .collect();
 
-        const bookings = await ctx.db
-          .query("slotBookings")
-          .withIndex("by_slotKey", (q) => q.eq("slotKey", key))
-          .collect();
-
-        const maxOrders = capacity?.maxOrders ?? 999;
-        if (heldCount + bookings.length >= maxOrders) {
-          blocked.push({ slotStart, reason: "FULL" });
-        } else {
-          available.push({ slotKey: key, startTime: slotStart, endTime: slotEnd });
-        }
-
-        cursor = new Date(cursor.getTime() + durationMinutes * 60 * 1000);
+      const maxOrders = capacity?.maxOrders ?? defaultMax;
+      if (heldCount + bookings.length >= maxOrders) {
+        blocked.push({ slotStart, reason: "FULL" });
+      } else {
+        available.push({ slotKey: key, startTime: slotStart, endTime: slotEnd });
       }
     }
 
-    return { available, blocked };
+    // Include selected slot key if cart has an active hold for this date+mode
+    let selectedSlotKey: string | null = null;
+    const cart = await ctx.db.get(args.cartId);
+    if (cart?.slotHoldId) {
+      const hold = await ctx.db.get(cart.slotHoldId as Id<"slotHolds">);
+      if (
+        hold &&
+        "status" in hold &&
+        hold.status === "held" &&
+        hold.expiresAt > Date.now() &&
+        hold.slotKey.startsWith(args.date + "|") &&
+        hold.slotKey.endsWith("|" + args.mode)
+      ) {
+        selectedSlotKey = hold.slotKey;
+      }
+    }
+
+    return { available, blocked, selectedSlotKey };
   },
 });
 
@@ -228,6 +269,17 @@ export const createHold = mutation({
     const cart = await ctx.db.get(args.cartId);
     if (!cart) throw new Error("Cart not found");
 
+    // Release any previous hold for this cart so we can select a new slot
+    if (cart.slotHoldId) {
+      const oldHold = await ctx.db.get(cart.slotHoldId as Id<"slotHolds">);
+      if (oldHold && "status" in oldHold && oldHold.status === "held") {
+        await ctx.db.patch(cart.slotHoldId as never, {
+          status: "released",
+          updatedAt: Date.now(),
+        });
+      }
+    }
+
     const [, , modeString] = args.slotKey.split("|");
     const mode = modeString as Mode;
     const rules = await getEnabledRules(ctx);
@@ -237,7 +289,8 @@ export const createHold = mutation({
       .query("slotCapacities")
       .withIndex("by_slotKey", (q) => q.eq("slotKey", args.slotKey))
       .unique();
-    const maxOrders = capacity?.maxOrders ?? 999;
+    const defaultMax = (rules.defaultMaxOrdersPerSlot as number | undefined) ?? 999;
+    const maxOrders = capacity?.maxOrders ?? defaultMax;
 
     const activeHolds = await ctx.db
       .query("slotHolds")
@@ -287,6 +340,16 @@ export const releaseHold = mutation({
       status: "released",
       updatedAt: Date.now(),
     });
+
+    // Clear slotHoldId from the cart so the UI updates immediately
+    const cart = await ctx.db.get(hold.cartId);
+    if (cart && cart.slotHoldId === args.holdId) {
+      await ctx.db.patch(hold.cartId, {
+        slotHoldId: undefined,
+        updatedAt: Date.now(),
+      });
+    }
+
     return args.holdId;
   },
 });
@@ -314,6 +377,23 @@ export const expireHolds = internalMutation({
   },
 });
 
+export const getHold = query({
+  args: { holdId: v.id("slotHolds") },
+  handler: async (ctx, args) => {
+    const hold = await ctx.db.get(args.holdId);
+    if (!hold || hold.status !== "held" || hold.expiresAt <= Date.now()) return null;
+    return hold;
+  },
+});
+
+export const adminGetEnabledRules = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireRole(ctx, "admin", "manager");
+    return await getEnabledRules(ctx);
+  },
+});
+
 export const adminUpsertAvailabilityRules = mutation({
   args: {
     version: v.number(),
@@ -330,6 +410,8 @@ export const adminUpsertAvailabilityRules = mutation({
     }),
     holdMinutes: v.number(),
     effectiveFrom: v.string(),
+    slotTimes: v.optional(v.array(v.string())),
+    defaultMaxOrdersPerSlot: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     await requireRole(ctx, "admin", "manager");
@@ -343,10 +425,47 @@ export const adminUpsertAvailabilityRules = mutation({
       await ctx.db.patch(rule._id, { enabled: false });
     }
 
+    const { slotTimes, defaultMaxOrdersPerSlot, ...rest } = args;
     return await ctx.db.insert("availabilityRules", {
-      ...args,
+      ...rest,
+      ...(slotTimes && slotTimes.length > 0 ? { slotTimes } : {}),
+      ...(typeof defaultMaxOrdersPerSlot === "number" ? { defaultMaxOrdersPerSlot } : {}),
       enabled: true,
       createdAt: Date.now(),
+    });
+  },
+});
+
+export const adminSetSlotCapacity = mutation({
+  args: {
+    slotKey: v.string(),
+    maxOrders: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await requireRole(ctx, "admin", "manager");
+    const [, date, startTime, mode] = args.slotKey.match(/^(\d{4}-\d{2}-\d{2})\|(\d{2}:\d{2})\|(pickup|delivery|shipping)$/) ?? [];
+    if (!date || !startTime || !mode) throw new Error("Invalid slotKey format");
+    const endH = parseInt(startTime.slice(0, 2), 10);
+    const endM = parseInt(startTime.slice(3), 10) + 60; // assume 60 min slot
+    const endTime = `${pad2(endH + Math.floor(endM / 60))}:${pad2(endM % 60)}`;
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("slotCapacities")
+      .withIndex("by_slotKey", (q) => q.eq("slotKey", args.slotKey))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, { maxOrders: args.maxOrders, updatedAt: now });
+      return existing._id;
+    }
+    return await ctx.db.insert("slotCapacities", {
+      slotKey: args.slotKey,
+      mode: mode as Mode,
+      date,
+      startTime,
+      endTime,
+      maxOrders: args.maxOrders,
+      createdAt: now,
+      updatedAt: now,
     });
   },
 });

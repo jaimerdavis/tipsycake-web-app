@@ -3,6 +3,7 @@
 import { action } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
+import { STORE_ORIGIN } from "./lib/storeConfig";
 
 /**
  * Normalize and geocode an address using external API.
@@ -103,9 +104,6 @@ export const normalizeAndGeocodeAddress = action({
   },
 });
 
-/** Store lat/lng for distance calculation (e.g. bakery). */
-const STORE_ORIGIN = { lat: 37.7749, lng: -122.4194 }; // placeholder; set via env
-
 /**
  * Compute distance from store origin and determine delivery zone.
  * FUL-006: Populates addressCache for eligibility lookups.
@@ -174,11 +172,11 @@ export const computeDistanceAndZone = action({
       addressId: args.addressId,
       distanceMiles,
       zoneId: (zoneId ?? undefined) as never,
-      eligibleDelivery: zones.some((z: DeliveryZone) => z.enabled) && distanceMiles < 15,
+      eligibleDelivery: zones.some((z: DeliveryZone) => z.enabled) && distanceMiles <= 10,
       eligibleShipping: true,
       computedAt: Date.now(),
     });
 
-    return { distanceMiles, zoneId, eligibleDelivery: distanceMiles < 15, eligibleShipping: true };
+    return { distanceMiles, zoneId, eligibleDelivery: distanceMiles <= 10, eligibleShipping: true };
   },
 });

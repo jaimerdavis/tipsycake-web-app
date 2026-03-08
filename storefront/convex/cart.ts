@@ -5,8 +5,7 @@ import { v } from "convex/values";
 
 import { computePricingSnapshot, computeUnitPriceCents } from "./lib/pricing";
 import { computeCouponDiscount } from "./coupons";
-
-const REDEEM_POINTS_PER_DOLLAR = 100;
+import { REDEEM_POINTS_PER_DOLLAR } from "./lib/loyaltyConstants";
 
 const modifierSelectionValidator = v.array(
   v.object({
@@ -78,13 +77,25 @@ async function validateAndPriceItem(
     variantDelta = variant.priceDeltaCents;
   }
 
-  const groups = await ctx.db
+  // Include both global (productId undefined) and product-specific modifier groups
+  const globalGroups = await ctx.db
+    .query("modifierGroups")
+    .filter((q) => q.eq(q.field("productId"), undefined))
+    .collect();
+  const productGroups = await ctx.db
     .query("modifierGroups")
     .withIndex("by_product", (q) => q.eq("productId", product._id))
     .collect();
+  const globalNames = new Set(globalGroups.map((g) => g.name));
+  const productOnly = productGroups.filter((g) => !globalNames.has(g.name));
+  const groups = [...globalGroups, ...productOnly];
 
+  const groupIds = new Set(groups.map((g) => g._id));
   const selectionsByGroup = new Map<string, Id<"modifierOptions">[]>();
   for (const selection of modifiers) {
+    if (!groupIds.has(selection.groupId)) {
+      throw new Error("Invalid modifier selection for this product");
+    }
     const existing = selectionsByGroup.get(selection.groupId) ?? [];
     existing.push(selection.optionId);
     selectionsByGroup.set(selection.groupId, existing);
@@ -136,20 +147,27 @@ export const getCartForPayment = query({
       .withIndex("by_cart", (q) => q.eq("cartId", args.cartId))
       .collect();
 
-    const productNames = new Map<string, string>();
+    const productCache = new Map<string, { name: string; images: string[] }>();
     for (const item of items) {
-      if (!productNames.has(item.productId as string)) {
+      if (!productCache.has(item.productId as string)) {
         const product = await ctx.db.get(item.productId);
-        productNames.set(item.productId as string, product?.name ?? "Item");
+        productCache.set(item.productId as string, {
+          name: product?.name ?? "Item",
+          images: product?.images ?? [],
+        });
       }
     }
 
     return {
       cart,
-      items: items.map((item) => ({
-        ...item,
-        productName: productNames.get(item.productId as string) ?? "Item",
-      })),
+      items: items.map((item) => {
+        const cached = productCache.get(item.productId as string);
+        return {
+          ...item,
+          productName: cached?.name ?? "Item",
+          productImages: cached?.images ?? [],
+        };
+      }),
     };
   },
 });
@@ -212,9 +230,20 @@ export const getActive = query({
       taxCents: 0,
     });
 
+    const enrichedItems = await Promise.all(
+      items.map(async (item) => {
+        const product = await ctx.db.get(item.productId);
+        return {
+          ...item,
+          productName: product?.name ?? "Unknown product",
+          productImages: product?.images ?? [],
+        };
+      })
+    );
+
     return {
       ...cart,
-      items,
+      items: enrichedItems,
       pricing,
     };
   },
@@ -263,6 +292,57 @@ export const addItem = mutation({
 
     await ctx.db.patch(cart._id, { updatedAt: now });
     return cart._id;
+  },
+});
+
+export const getCartItem = query({
+  args: {
+    cartItemId: v.id("cartItems"),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.cartItemId);
+  },
+});
+
+export const updateItemFull = mutation({
+  args: {
+    cartItemId: v.id("cartItems"),
+    variantId: v.optional(v.id("productVariants")),
+    qty: v.number(),
+    modifiers: modifierSelectionValidator,
+    itemNote: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.qty <= 0) throw new Error("Quantity must be positive");
+
+    const cartItem = await ctx.db.get(args.cartItemId);
+    if (!cartItem) throw new Error("Cart item not found");
+
+    const product = await ctx.db.get(cartItem.productId);
+    if (!product) throw new Error("Product not found");
+    if (product.maxQtyPerOrder && args.qty > product.maxQtyPerOrder) {
+      throw new Error(`Max quantity for this item is ${product.maxQtyPerOrder}`);
+    }
+
+    const unitPriceSnapshotCents = await validateAndPriceItem(
+      ctx,
+      cartItem.productId,
+      args.variantId,
+      args.modifiers
+    );
+
+    const now = Date.now();
+    await ctx.db.patch(args.cartItemId, {
+      variantId: args.variantId,
+      qty: args.qty,
+      modifiers: args.modifiers,
+      itemNote: args.itemNote,
+      unitPriceSnapshotCents,
+      updatedAt: now,
+    });
+
+    await ctx.db.patch(cartItem.cartId, { updatedAt: now });
+    return args.cartItemId;
   },
 });
 
@@ -417,24 +497,42 @@ export const setTip = mutation({
   },
 });
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_REGEX = /^[\d\s\-\(\)\+\.]{10,20}$/;
+
+function isValidEmail(s: string): boolean {
+  const trimmed = s.trim().toLowerCase();
+  return trimmed.length > 0 && EMAIL_REGEX.test(trimmed);
+}
+
+function isValidPhone(s: string): boolean {
+  const digits = s.replace(/\D/g, "");
+  return digits.length >= 10 && PHONE_REGEX.test(s.trim());
+}
+
 export const setContact = mutation({
   args: {
     cartId: v.id("carts"),
-    email: v.string(),
+    email: v.optional(v.string()),
     phone: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const cart = await ctx.db.get(args.cartId);
     if (!cart) throw new Error("Cart not found");
 
-    const email = args.email.trim().toLowerCase();
-    if (!email || !email.includes("@")) {
-      throw new Error("Valid email is required");
+    const email = args.email?.trim();
+    const phone = args.phone?.trim();
+
+    const hasValidEmail = email !== undefined && email !== "" && isValidEmail(email);
+    const hasValidPhone = phone !== undefined && phone !== "" && isValidPhone(phone);
+
+    if (!hasValidEmail && !hasValidPhone) {
+      throw new Error("At least one of valid email or phone is required");
     }
 
     await ctx.db.patch(args.cartId, {
-      contactEmail: email,
-      contactPhone: args.phone?.trim() || undefined,
+      contactEmail: hasValidEmail ? email!.toLowerCase() : undefined,
+      contactPhone: hasValidPhone ? phone : undefined,
       updatedAt: Date.now(),
     });
     return args.cartId;

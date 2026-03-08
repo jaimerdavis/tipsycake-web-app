@@ -1,12 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
+import type { Resolver } from "react-hook-form";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { Pencil, Plus, Trash2, X } from "lucide-react";
 
 import { api } from "../../../../convex/_generated/api";
+import type { Id } from "../../../../convex/_generated/dataModel";
+import { productDisplayName } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -19,16 +24,37 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { ImagePicker } from "@/components/ImagePicker";
 import { ProductImage } from "@/components/ProductImage";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Separator } from "@/components/ui/separator";
+
+function dollarsToCents(dollars: number): number {
+  return Math.round(dollars * 100);
+}
+
+function centsToDollars(cents: number): string {
+  return (cents / 100).toFixed(2);
+}
+
+// ── Schemas ──
 
 const productSchema = z.object({
+  productCode: z.string().optional(),
   name: z.string().min(2),
   slug: z.string().min(2),
   description: z.string().min(2),
   imagesCsv: z.string().optional(),
   categoriesCsv: z.string().optional(),
   tagsCsv: z.string().optional(),
-  basePriceCents: z.coerce.number().int().nonnegative(),
+  basePrice: z.coerce.number().nonnegative(),
   leadTimeHoursOverride: z.coerce.number().int().nonnegative().optional(),
   maxQtyPerOrder: z.coerce.number().int().positive().optional(),
   inStockToday: z.boolean().default(true),
@@ -36,29 +62,6 @@ const productSchema = z.object({
   pickup: z.boolean().default(true),
   delivery: z.boolean().default(true),
   shipping: z.boolean().default(false),
-});
-
-const variantSchema = z.object({
-  productId: z.string().min(1),
-  label: z.string().min(1),
-  priceDeltaCents: z.coerce.number().int(),
-  sku: z.string().optional(),
-});
-
-const modifierGroupSchema = z.object({
-  productId: z.string().min(1),
-  name: z.string().min(1),
-  required: z.boolean().default(false),
-  minSelect: z.coerce.number().int().nonnegative(),
-  maxSelect: z.coerce.number().int().positive(),
-  sortOrder: z.coerce.number().int().nonnegative(),
-});
-
-const modifierOptionSchema = z.object({
-  groupId: z.string().min(1),
-  name: z.string().min(1),
-  priceDeltaCents: z.coerce.number().int(),
-  sortOrder: z.coerce.number().int().nonnegative(),
 });
 
 function parseCsv(input?: string) {
@@ -69,23 +72,1173 @@ function parseCsv(input?: string) {
     .filter(Boolean);
 }
 
+// ── Edit Product Sheet ──
+
+function EditProductSheet({
+  productId,
+  onClose,
+}: {
+  productId: Id<"products">;
+  onClose: () => void;
+}) {
+  const product = useQuery(api.catalog.getProduct, { productId });
+
+  const updateProduct = useMutation(api.admin.catalog.updateProduct);
+  const createVariant = useMutation(api.admin.catalog.createVariant);
+  const updateVariant = useMutation(api.admin.catalog.updateVariant);
+  const deleteVariant = useMutation(api.admin.catalog.deleteVariant);
+  const createModifierGroup = useMutation(api.admin.catalog.createModifierGroup);
+  const updateModifierGroup = useMutation(api.admin.catalog.updateModifierGroup);
+  const deleteModifierGroup = useMutation(api.admin.catalog.deleteModifierGroup);
+  const createModifierOption = useMutation(api.admin.catalog.createModifierOption);
+  const updateModifierOption = useMutation(api.admin.catalog.updateModifierOption);
+  const deleteModifierOption = useMutation(api.admin.catalog.deleteModifierOption);
+  const generateUploadUrl = useMutation(api.storage.generateUploadUrl);
+
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [galleryPickerOpen, setGalleryPickerOpen] = useState(false);
+  const [mainImagePickerSlot, setMainImagePickerSlot] = useState<number | "all" | null>(null);
+  const [shapePickerFor, setShapePickerFor] = useState<{
+    shape: "mixed" | "even20" | "rose" | "blossom";
+    slot?: number;
+  } | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // Product detail fields
+  const [fields, setFields] = useState<Record<string, string | number | boolean> | null>(null);
+
+  // Shape images: 4 shapes × 3 images each
+  const [shapeImages, setShapeImages] = useState<{
+    mixed: string[];
+    even20: string[];
+    rose: string[];
+    blossom: string[];
+  } | null>(null);
+
+  // Variant inline add
+  const [newVariantLabel, setNewVariantLabel] = useState("");
+  const [newVariantDelta, setNewVariantDelta] = useState("");
+  const [newVariantSku, setNewVariantSku] = useState("");
+
+  // Modifier group inline add
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupDescription, setNewGroupDescription] = useState("");
+  const [newGroupRequired, setNewGroupRequired] = useState(false);
+  const [newGroupMin, setNewGroupMin] = useState(0);
+  const [newGroupMax, setNewGroupMax] = useState(1);
+
+  // Modifier option inline add (keyed by group ID)
+  const [addingOptionForGroup, setAddingOptionForGroup] = useState<string | null>(null);
+  const [newOptionName, setNewOptionName] = useState("");
+  const [newOptionDelta, setNewOptionDelta] = useState("");
+
+  // Inline edit states
+  const [editingVariantId, setEditingVariantId] = useState<string | null>(null);
+  const [editVariantLabel, setEditVariantLabel] = useState("");
+  const [editVariantDelta, setEditVariantDelta] = useState("");
+
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editGroupName, setEditGroupName] = useState("");
+  const [editGroupDescription, setEditGroupDescription] = useState("");
+  const [editGroupRequired, setEditGroupRequired] = useState(false);
+  const [editGroupMin, setEditGroupMin] = useState(0);
+  const [editGroupMax, setEditGroupMax] = useState(1);
+
+  const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
+  const [editOptionName, setEditOptionName] = useState("");
+  const [editOptionDelta, setEditOptionDelta] = useState("");
+
+  // Initialize fields when product loads
+  if (product && !fields) {
+    setFields({
+      productCode: product.productCode ?? "",
+      name: product.name,
+      slug: product.slug,
+      description: product.description,
+      basePrice: product.basePriceCents / 100,
+      status: product.status,
+      imagesCsv: product.images.join(", "),
+      categoriesCsv: product.categories.join(", "),
+      tagsCsv: product.tags.join(", "),
+      inStockToday: product.inStockToday,
+      pickup: product.fulfillmentFlags.pickup,
+      delivery: product.fulfillmentFlags.delivery,
+      shipping: product.fulfillmentFlags.shipping,
+      leadTimeHoursOverride: product.leadTimeHoursOverride ?? 0,
+      maxQtyPerOrder: product.maxQtyPerOrder ?? 10,
+    });
+  }
+
+  if (product && !shapeImages) {
+    const si = product.shapeImages;
+    setShapeImages({
+      mixed: si?.mixed?.slice(0, 3) ?? [],
+      even20: si?.even20?.slice(0, 3) ?? [],
+      rose: si?.rose?.slice(0, 3) ?? [],
+      blossom: si?.blossom?.slice(0, 3) ?? [],
+    });
+  }
+
+  function updateField(key: string, value: string | number | boolean) {
+    setFields((prev) => (prev ? { ...prev, [key]: value } : null));
+  }
+
+  function updateShapeImages(
+    shape: "mixed" | "even20" | "rose" | "blossom",
+    images: string[]
+  ) {
+    setShapeImages((prev) =>
+      prev ? { ...prev, [shape]: images.slice(0, 3) } : null
+    );
+  }
+
+  function flash(msg: string) {
+    setStatus(msg);
+    setTimeout(() => setStatus(null), 3000);
+  }
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setUploadingImage(true);
+    try {
+      const newIds: string[] = [];
+      for (const file of Array.from(files)) {
+        const url = await generateUploadUrl();
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": file.type },
+          body: file,
+        });
+        const json = (await res.json()) as { storageId: string };
+        newIds.push(json.storageId);
+      }
+      const existing = String(fields?.imagesCsv || "");
+      const merged = [existing, ...newIds].filter(Boolean).join(", ");
+      updateField("imagesCsv", merged);
+      flash(`${newIds.length} image(s) uploaded`);
+    } catch {
+      flash("Image upload failed");
+    } finally {
+      setUploadingImage(false);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
+  }
+
+  async function onSaveDetails() {
+    if (!fields) return;
+    setSaving(true);
+    try {
+      await updateProduct({
+        productId,
+        productCode: String(fields.productCode || "").trim() || undefined,
+        name: String(fields.name),
+        slug: String(fields.slug),
+        description: String(fields.description),
+        images: parseCsv(String(fields.imagesCsv || "")),
+        status: fields.status as "active" | "hidden",
+        categories: parseCsv(String(fields.categoriesCsv || "")),
+        tags: parseCsv(String(fields.tagsCsv || "")),
+        basePriceCents: dollarsToCents(Number(fields.basePrice)),
+        fulfillmentFlags: {
+          pickup: Boolean(fields.pickup),
+          delivery: Boolean(fields.delivery),
+          shipping: Boolean(fields.shipping),
+        },
+        leadTimeHoursOverride: Number(fields.leadTimeHoursOverride) || undefined,
+        inStockToday: Boolean(fields.inStockToday),
+        maxQtyPerOrder: Number(fields.maxQtyPerOrder) || undefined,
+        shapeImages:
+          shapeImages && Object.values(shapeImages).some((arr) => arr.length > 0)
+            ? {
+                mixed: shapeImages.mixed.length > 0 ? shapeImages.mixed : undefined,
+                even20: shapeImages.even20.length > 0 ? shapeImages.even20 : undefined,
+                rose: shapeImages.rose.length > 0 ? shapeImages.rose : undefined,
+                blossom: shapeImages.blossom.length > 0 ? shapeImages.blossom : undefined,
+              }
+            : undefined,
+      });
+      flash("Product saved");
+    } catch (err) {
+      flash(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ── Variant actions ──
+
+  async function onAddVariant() {
+    if (!newVariantLabel.trim()) return;
+    try {
+      await createVariant({
+        productId,
+        label: newVariantLabel.trim(),
+        priceDeltaCents: dollarsToCents(Number(newVariantDelta) || 0),
+        sku: newVariantSku.trim() || undefined,
+      });
+      setNewVariantLabel("");
+      setNewVariantDelta("");
+      setNewVariantSku("");
+      flash("Variant added");
+    } catch (err) {
+      flash(err instanceof Error ? err.message : "Failed");
+    }
+  }
+
+  async function onSaveVariant(variantId: Id<"productVariants">) {
+    try {
+      await updateVariant({
+        variantId,
+        label: editVariantLabel.trim() || undefined,
+        priceDeltaCents: dollarsToCents(Number(editVariantDelta) || 0),
+      });
+      setEditingVariantId(null);
+      flash("Variant updated");
+    } catch (err) {
+      flash(err instanceof Error ? err.message : "Failed");
+    }
+  }
+
+  // ── Modifier group actions ──
+
+  async function onAddGroup() {
+    if (!newGroupName.trim()) return;
+    try {
+      await createModifierGroup({
+        productId,
+        name: newGroupName.trim(),
+        description: newGroupDescription.trim() || undefined,
+        required: newGroupRequired,
+        minSelect: newGroupMin,
+        maxSelect: newGroupMax,
+        sortOrder: (product?.modifierGroups.length ?? 0),
+      });
+      setNewGroupName("");
+      setNewGroupDescription("");
+      setNewGroupRequired(false);
+      setNewGroupMin(0);
+      setNewGroupMax(1);
+      flash("Group added");
+    } catch (err) {
+      flash(err instanceof Error ? err.message : "Failed");
+    }
+  }
+
+  async function onSaveGroup(groupId: Id<"modifierGroups">) {
+    try {
+      await updateModifierGroup({
+        groupId,
+        name: editGroupName.trim() || undefined,
+        description: editGroupDescription.trim() || undefined,
+        required: editGroupRequired,
+        minSelect: editGroupMin,
+        maxSelect: editGroupMax,
+      });
+      setEditingGroupId(null);
+      flash("Group updated");
+    } catch (err) {
+      flash(err instanceof Error ? err.message : "Failed");
+    }
+  }
+
+  // ── Modifier option actions ──
+
+  async function onAddOption(groupId: Id<"modifierGroups">, sortOrder: number) {
+    if (!newOptionName.trim()) return;
+    try {
+      await createModifierOption({
+        groupId,
+        name: newOptionName.trim(),
+        priceDeltaCents: dollarsToCents(Number(newOptionDelta) || 0),
+        sortOrder,
+      });
+      setNewOptionName("");
+      setNewOptionDelta("");
+      setAddingOptionForGroup(null);
+      flash("Option added");
+    } catch (err) {
+      flash(err instanceof Error ? err.message : "Failed");
+    }
+  }
+
+  async function onSaveOption(optionId: Id<"modifierOptions">) {
+    try {
+      await updateModifierOption({
+        optionId,
+        name: editOptionName.trim() || undefined,
+        priceDeltaCents: dollarsToCents(Number(editOptionDelta) || 0),
+      });
+      setEditingOptionId(null);
+      flash("Option updated");
+    } catch (err) {
+      flash(err instanceof Error ? err.message : "Failed");
+    }
+  }
+
+  if (!product) {
+    return (
+      <Sheet open onOpenChange={() => onClose()}>
+        <SheetContent side="right" className="sm:max-w-2xl">
+          <SheetHeader>
+            <SheetTitle>Loading...</SheetTitle>
+          </SheetHeader>
+          <div className="flex items-center justify-center py-12">
+            <p className="text-sm text-muted-foreground">Loading product...</p>
+          </div>
+        </SheetContent>
+      </Sheet>
+    );
+  }
+
+  return (
+    <Sheet open onOpenChange={() => onClose()}>
+      <SheetContent side="right" className="sm:max-w-2xl overflow-y-auto">
+        <SheetHeader>
+          <SheetTitle>Edit: {productDisplayName(product.name)}</SheetTitle>
+          <SheetDescription>
+            {product.productCode ? `${product.productCode} · ` : ""}
+            ${centsToDollars(product.basePriceCents)}
+          </SheetDescription>
+          {status && (
+            <Badge variant="secondary" className="w-fit">
+              {status}
+            </Badge>
+          )}
+        </SheetHeader>
+
+        <div className="px-6 pb-6">
+          <Tabs defaultValue="details">
+            <TabsList>
+              <TabsTrigger value="details">Details</TabsTrigger>
+              <TabsTrigger value="mainImages">Main Images</TabsTrigger>
+              <TabsTrigger value="shapeImages">Shape Images</TabsTrigger>
+              <TabsTrigger value="variants">
+                Variants ({product.variants.length})
+              </TabsTrigger>
+              <TabsTrigger value="modifiers">
+                Modifiers ({product.modifierGroups.length})
+              </TabsTrigger>
+            </TabsList>
+
+            {/* ════════ DETAILS TAB ════════ */}
+            <TabsContent value="details" className="mt-4 space-y-4">
+              {fields && (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Product code</Label>
+                      <Input
+                        value={String(fields.productCode || "")}
+                        onChange={(e) => updateField("productCode", e.target.value)}
+                        placeholder="e.g. CAKE-001"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Name</Label>
+                      <Input
+                        value={String(fields.name)}
+                        onChange={(e) => updateField("name", e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Slug</Label>
+                      <Input
+                        value={String(fields.slug)}
+                        onChange={(e) => updateField("slug", e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Base price ($)</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={Number(fields.basePrice)}
+                        onChange={(e) => updateField("basePrice", Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Status</Label>
+                      <select
+                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                        value={String(fields.status)}
+                        onChange={(e) => updateField("status", e.target.value)}
+                      >
+                        <option value="active">Active</option>
+                        <option value="hidden">Hidden</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Lead time override (hours)</Label>
+                      <Input
+                        type="number"
+                        value={Number(fields.leadTimeHoursOverride)}
+                        onChange={(e) => updateField("leadTimeHoursOverride", Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Max qty per order</Label>
+                      <Input
+                        type="number"
+                        value={Number(fields.maxQtyPerOrder)}
+                        onChange={(e) => updateField("maxQtyPerOrder", Number(e.target.value))}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Description</Label>
+                    <Textarea
+                      value={String(fields.description)}
+                      onChange={(e) => updateField("description", e.target.value)}
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Images</Label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        ref={imageInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleImageUpload}
+                        className="text-sm file:mr-2 file:rounded file:border-0 file:bg-primary file:px-3 file:py-1 file:text-xs file:text-primary-foreground"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setGalleryPickerOpen(true)}
+                      >
+                        Choose from Gallery
+                      </Button>
+                      {uploadingImage && (
+                        <span className="text-xs text-muted-foreground">Uploading...</span>
+                      )}
+                    </div>
+                    <Input
+                      value={String(fields.imagesCsv || "")}
+                      onChange={(e) => updateField("imagesCsv", e.target.value)}
+                      placeholder="Image URLs or storage IDs, comma-separated"
+                    />
+                    <ImagePicker
+                      open={galleryPickerOpen}
+                      onOpenChange={setGalleryPickerOpen}
+                      onSelect={(storageIds) => {
+                        const existing = parseCsv(String(fields?.imagesCsv || ""));
+                        const merged = [...existing, ...storageIds].join(", ");
+                        updateField("imagesCsv", merged);
+                        flash(`${storageIds.length} image(s) added from gallery`);
+                      }}
+                    />
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Categories (comma-separated)</Label>
+                      <Input
+                        value={String(fields.categoriesCsv || "")}
+                        onChange={(e) => updateField("categoriesCsv", e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Tags (comma-separated)</Label>
+                      <Input
+                        value={String(fields.tagsCsv || "")}
+                        onChange={(e) => updateField("tagsCsv", e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-4">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(fields.inStockToday)}
+                        onChange={(e) => updateField("inStockToday", e.target.checked)}
+                      />
+                      In stock today
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(fields.pickup)}
+                        onChange={(e) => updateField("pickup", e.target.checked)}
+                      />
+                      Pickup
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(fields.delivery)}
+                        onChange={(e) => updateField("delivery", e.target.checked)}
+                      />
+                      Delivery
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(fields.shipping)}
+                        onChange={(e) => updateField("shipping", e.target.checked)}
+                      />
+                      Shipping
+                    </label>
+                  </div>
+
+                  <Button disabled={saving} onClick={onSaveDetails}>
+                    {saving ? "Saving..." : "Save details"}
+                  </Button>
+                </>
+              )}
+            </TabsContent>
+
+            {/* ════════ MAIN IMAGES TAB ════════ */}
+            <TabsContent value="mainImages" className="mt-4 space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Main product photos (up to 4). These show on the menu and product page.
+              </p>
+              {fields && (
+                <div className="flex flex-wrap items-start gap-3">
+                  {[0, 1, 2, 3].map((i) => {
+                    const arr = parseCsv(String(fields.imagesCsv || ""));
+                    const src = arr[i];
+                    return (
+                      <div key={i} className="w-24 shrink-0 space-y-1">
+                        <button
+                          type="button"
+                          onClick={() => setMainImagePickerSlot(i)}
+                          className="relative aspect-square w-full overflow-hidden rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/30 transition hover:border-muted-foreground/50 hover:bg-muted/50"
+                        >
+                          {src ? (
+                            <ProductImage
+                              images={[src]}
+                              name={product?.name ?? ""}
+                              className="h-full w-full object-contain"
+                            />
+                          ) : (
+                            <span className="flex h-full w-full items-center justify-center text-2xl text-muted-foreground">
+                              +
+                            </span>
+                          )}
+                        </button>
+                        <p className="text-center text-xs text-muted-foreground">
+                          Photo {i + 1}
+                        </p>
+                      </div>
+                    );
+                  })}
+                  <div className="flex shrink-0 flex-col items-center gap-1 self-center">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setMainImagePickerSlot("all")}
+                    >
+                      Set all 4
+                    </Button>
+                  </div>
+                </div>
+              )}
+              <Button disabled={saving} onClick={onSaveDetails}>
+                {saving ? "Saving..." : "Save"}
+              </Button>
+              <ImagePicker
+                open={mainImagePickerSlot !== null}
+                onOpenChange={(open) => !open && setMainImagePickerSlot(null)}
+                onSelect={(storageIds) => {
+                  if (!fields || mainImagePickerSlot === null) return;
+                  const existing = parseCsv(String(fields.imagesCsv || ""));
+                  let next: string[];
+                  if (mainImagePickerSlot === "all") {
+                    next = storageIds.slice(0, 4);
+                  } else {
+                    const padded = [
+                      existing[0] ?? "",
+                      existing[1] ?? "",
+                      existing[2] ?? "",
+                      existing[3] ?? "",
+                    ];
+                    padded[mainImagePickerSlot] = storageIds[0] ?? "";
+                    next = padded.filter(Boolean);
+                  }
+                  updateField("imagesCsv", next.join(", "));
+                  setMainImagePickerSlot(null);
+                  flash(
+                    mainImagePickerSlot === "all"
+                      ? `Set ${next.length} image(s)`
+                      : "Image updated"
+                  );
+                }}
+                multiSelect={mainImagePickerSlot === "all"}
+              />
+            </TabsContent>
+
+            {/* ════════ SHAPE IMAGES TAB ════════ */}
+            <TabsContent value="shapeImages" className="mt-4 space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Configure 3 images per shape. Customer selects a shape and sees
+                those images.
+              </p>
+              {shapeImages && (
+                <div className="space-y-4">
+                  {(
+                    [
+                      { key: "mixed" as const, label: "Mixed" },
+                      { key: "even20" as const, label: "Even 20" },
+                      { key: "rose" as const, label: "Rose" },
+                      { key: "blossom" as const, label: "Blossom" },
+                    ] as const
+                  ).map(({ key, label }) => (
+                    <div key={key} className="rounded-lg border p-4">
+                      <div className="mb-3 flex items-center justify-between">
+                        <p className="font-medium">{label}</p>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            setShapePickerFor({ shape: key })
+                          }
+                        >
+                          Set 3 images
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        {[0, 1, 2].map((i) => {
+                          const imgId = shapeImages[key][i];
+                          return (
+                            <div
+                              key={i}
+                              className="relative aspect-square overflow-hidden rounded-lg border bg-muted/30"
+                            >
+                              {imgId ? (
+                                <>
+                                  <ProductImage
+                                    images={[imgId]}
+                                    name={`${label} ${i + 1}`}
+                                    className="h-full w-full object-contain"
+                                  />
+                                  <Button
+                                    size="icon"
+                                    variant="destructive"
+                                    className="absolute right-1 top-1 h-6 w-6"
+                                    onClick={() => {
+                                      const next = [...shapeImages[key]];
+                                      next.splice(i, 1);
+                                      updateShapeImages(key, next);
+                                    }}
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="flex h-full w-full items-center justify-center text-muted-foreground hover:bg-muted/50"
+                                  onClick={() =>
+                                    setShapePickerFor({ shape: key, slot: i })
+                                  }
+                                >
+                                  <Plus className="h-6 w-6" />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Button disabled={saving} onClick={onSaveDetails}>
+                {saving ? "Saving..." : "Save details"}
+              </Button>
+              <ImagePicker
+                open={shapePickerFor !== null}
+                onOpenChange={(open) => !open && setShapePickerFor(null)}
+                onSelect={(ids) => {
+                  if (!shapePickerFor || !shapeImages) return;
+                  const { shape, slot } = shapePickerFor;
+                  if (slot !== undefined) {
+                    const arr = [...shapeImages[shape]];
+                    arr[slot] = ids[0] ?? "";
+                    updateShapeImages(shape, arr.filter(Boolean));
+                  } else {
+                    updateShapeImages(shape, ids);
+                  }
+                  setShapePickerFor(null);
+                  flash(
+                    slot !== undefined
+                      ? "Image set"
+                      : `Set ${ids.length} image(s) for ${shape}`
+                  );
+                }}
+                multiSelect={shapePickerFor?.slot === undefined}
+              />
+            </TabsContent>
+
+            {/* ════════ VARIANTS TAB ════════ */}
+            <TabsContent value="variants" className="mt-4 space-y-4">
+              {product.variants.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  No variants yet. Add sizes, flavors, or other options below.
+                </p>
+              )}
+
+              {product.variants.map((v) => (
+                <div
+                  key={v._id}
+                  className="flex items-center gap-3 rounded-md border p-3"
+                >
+                  {editingVariantId === v._id ? (
+                    <div className="flex flex-1 flex-wrap items-end gap-2">
+                      <div className="flex-1 space-y-1">
+                        <Label className="text-xs">Label</Label>
+                        <Input
+                          value={editVariantLabel}
+                          onChange={(e) => setEditVariantLabel(e.target.value)}
+                        />
+                      </div>
+                      <div className="w-28 space-y-1">
+                        <Label className="text-xs">Delta ($)</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={editVariantDelta}
+                          onChange={(e) => setEditVariantDelta(e.target.value)}
+                        />
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => onSaveVariant(v._id)}
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditingVariantId(null)}
+                      >
+                        <X className="size-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex-1">
+                        <p className="font-medium">{v.label}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {v.priceDeltaCents >= 0 ? "+" : ""}
+                          ${centsToDollars(v.priceDeltaCents)}
+                          {v.sku ? ` · SKU: ${v.sku}` : ""}
+                        </p>
+                      </div>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setEditingVariantId(v._id);
+                          setEditVariantLabel(v.label);
+                          setEditVariantDelta(String(v.priceDeltaCents / 100));
+                        }}
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => deleteVariant({ variantId: v._id })}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </>
+                  )}
+                </div>
+              ))}
+
+              <Separator />
+
+              <div className="space-y-3">
+                <p className="text-sm font-medium">Add variant</p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="flex-1 space-y-1">
+                    <Label className="text-xs">Label</Label>
+                    <Input
+                      placeholder='e.g. 8-inch'
+                      value={newVariantLabel}
+                      onChange={(e) => setNewVariantLabel(e.target.value)}
+                    />
+                  </div>
+                  <div className="w-28 space-y-1">
+                    <Label className="text-xs">Delta ($)</Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={newVariantDelta}
+                      onChange={(e) => setNewVariantDelta(e.target.value)}
+                    />
+                  </div>
+                  <div className="w-28 space-y-1">
+                    <Label className="text-xs">SKU</Label>
+                    <Input
+                      placeholder="Optional"
+                      value={newVariantSku}
+                      onChange={(e) => setNewVariantSku(e.target.value)}
+                    />
+                  </div>
+                  <Button size="sm" onClick={onAddVariant}>
+                    <Plus className="size-4" /> Add
+                  </Button>
+                </div>
+              </div>
+            </TabsContent>
+
+            {/* ════════ MODIFIERS TAB ════════ */}
+            <TabsContent value="modifiers" className="mt-4 space-y-5">
+              <p className="text-sm text-muted-foreground">
+                Birthday Extras, Make it Extra Tipsy, and Shape are store-wide.{" "}
+                <Link href="/admin/modifiers" className="text-primary underline hover:no-underline">
+                  Edit in Store Modifiers
+                </Link>
+              </p>
+              {(() => {
+                const productSpecificGroups = product.modifierGroups.filter(
+                  (g) => (g as { productId?: Id<"products"> }).productId === productId
+                );
+                return productSpecificGroups.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No product-specific modifier groups. Add custom modifiers for this product below.
+                  </p>
+                ) : null;
+              })()}
+
+              {product.modifierGroups
+                .filter((g) => (g as { productId?: Id<"products"> }).productId === productId)
+                .map((group) => {
+                const options = (group.options ?? []) as Array<{
+                  _id: Id<"modifierOptions">;
+                  name: string;
+                  priceDeltaCents: number;
+                  sortOrder: number;
+                }>;
+
+                return (
+                  <div key={group._id} className="rounded-lg border">
+                    {/* Group header */}
+                    <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-2">
+                      {editingGroupId === group._id ? (
+                        <div className="flex flex-1 flex-wrap items-end gap-2">
+                          <div className="flex-1 space-y-1">
+                            <Label className="text-xs">Name</Label>
+                            <Input
+                              value={editGroupName}
+                              onChange={(e) => setEditGroupName(e.target.value)}
+                            />
+                          </div>
+                          <div className="w-full flex-1 basis-full space-y-1">
+                            <Label className="text-xs">Description (shown as tooltip on product page)</Label>
+                            <Input
+                              placeholder="e.g. Includes non-standard decoration with a Happy Birthday Cake Sign"
+                              value={editGroupDescription}
+                              onChange={(e) => setEditGroupDescription(e.target.value)}
+                            />
+                          </div>
+                          <div className="w-16 space-y-1">
+                            <Label className="text-xs">Min</Label>
+                            <Input
+                              type="number"
+                              value={editGroupMin}
+                              onChange={(e) => setEditGroupMin(Number(e.target.value))}
+                            />
+                          </div>
+                          <div className="w-16 space-y-1">
+                            <Label className="text-xs">Max</Label>
+                            <Input
+                              type="number"
+                              value={editGroupMax}
+                              onChange={(e) => setEditGroupMax(Number(e.target.value))}
+                            />
+                          </div>
+                          <label className="flex items-center gap-1.5 text-xs">
+                            <input
+                              type="checkbox"
+                              checked={editGroupRequired}
+                              onChange={(e) => setEditGroupRequired(e.target.checked)}
+                            />
+                            Required
+                          </label>
+                          <Button size="sm" onClick={() => onSaveGroup(group._id)}>
+                            Save
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEditingGroupId(null)}
+                          >
+                            <X className="size-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex-1">
+                            <p className="text-sm font-medium">{group.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {group.required ? "Required" : "Optional"} · Select{" "}
+                              {group.minSelect}–{group.maxSelect}
+                            </p>
+                          </div>
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setEditingGroupId(group._id);
+                              setEditGroupName(group.name);
+                              setEditGroupDescription((group as { description?: string }).description ?? "");
+                              setEditGroupRequired(group.required);
+                              setEditGroupMin(group.minSelect);
+                              setEditGroupMax(group.maxSelect);
+                            }}
+                          >
+                            <Pencil className="size-3.5" />
+                          </Button>
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => deleteModifierGroup({ groupId: group._id })}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Options list */}
+                    <div className="divide-y">
+                      {options.map((opt) => (
+                        <div
+                          key={opt._id}
+                          className="flex items-center gap-2 px-3 py-2"
+                        >
+                          {editingOptionId === opt._id ? (
+                            <div className="flex flex-1 flex-wrap items-end gap-2">
+                              <div className="flex-1 space-y-1">
+                                <Label className="text-xs">Name</Label>
+                                <Input
+                                  value={editOptionName}
+                                  onChange={(e) => setEditOptionName(e.target.value)}
+                                />
+                              </div>
+                              <div className="w-28 space-y-1">
+                                <Label className="text-xs">Delta ($)</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={editOptionDelta}
+                                  onChange={(e) => setEditOptionDelta(e.target.value)}
+                                />
+                              </div>
+                              <Button size="sm" onClick={() => onSaveOption(opt._id)}>
+                                Save
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setEditingOptionId(null)}
+                              >
+                                <X className="size-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <>
+                              <span className="flex-1 text-sm">{opt.name}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {opt.priceDeltaCents === 0
+                                  ? "Free"
+                                  : `+$${centsToDollars(opt.priceDeltaCents)}`}
+                              </span>
+                              <Button
+                                size="icon-xs"
+                                variant="ghost"
+                                onClick={() => {
+                                  setEditingOptionId(opt._id);
+                                  setEditOptionName(opt.name);
+                                  setEditOptionDelta(String(opt.priceDeltaCents / 100));
+                                }}
+                              >
+                                <Pencil className="size-3" />
+                              </Button>
+                              <Button
+                                size="icon-xs"
+                                variant="ghost"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => deleteModifierOption({ optionId: opt._id })}
+                              >
+                                <Trash2 className="size-3" />
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+
+                      {/* Add option row */}
+                      {addingOptionForGroup === group._id ? (
+                        <div className="flex flex-wrap items-end gap-2 px-3 py-2">
+                          <div className="flex-1 space-y-1">
+                            <Label className="text-xs">Option name</Label>
+                            <Input
+                              placeholder="e.g. Gold Sprinkles"
+                              value={newOptionName}
+                              onChange={(e) => setNewOptionName(e.target.value)}
+                            />
+                          </div>
+                          <div className="w-28 space-y-1">
+                            <Label className="text-xs">Delta ($)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              placeholder="0.00"
+                              value={newOptionDelta}
+                              onChange={(e) => setNewOptionDelta(e.target.value)}
+                            />
+                          </div>
+                          <Button
+                            size="sm"
+                            onClick={() => onAddOption(group._id, options.length)}
+                          >
+                            Add
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setAddingOptionForGroup(null)}
+                          >
+                            <X className="size-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:bg-muted/30"
+                          onClick={() => {
+                            setAddingOptionForGroup(group._id);
+                            setNewOptionName("");
+                            setNewOptionDelta("");
+                          }}
+                        >
+                          <Plus className="size-3" /> Add option
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              <Separator />
+
+              {/* Add modifier group */}
+              <div className="space-y-3">
+                <p className="text-sm font-medium">Add modifier group</p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="flex-1 space-y-1">
+                    <Label className="text-xs">Group name</Label>
+                    <Input
+                      placeholder="e.g. Birthday Extras"
+                      value={newGroupName}
+                      onChange={(e) => setNewGroupName(e.target.value)}
+                    />
+                  </div>
+                  <div className="w-full flex-1 basis-full space-y-1">
+                    <Label className="text-xs">Description (shown as tooltip)</Label>
+                    <Input
+                      placeholder="e.g. Includes non-standard decoration with a Happy Birthday Cake Sign"
+                      value={newGroupDescription}
+                      onChange={(e) => setNewGroupDescription(e.target.value)}
+                    />
+                  </div>
+                  <div className="w-16 space-y-1">
+                    <Label className="text-xs">Min</Label>
+                    <Input
+                      type="number"
+                      value={newGroupMin}
+                      onChange={(e) => setNewGroupMin(Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="w-16 space-y-1">
+                    <Label className="text-xs">Max</Label>
+                    <Input
+                      type="number"
+                      value={newGroupMax}
+                      onChange={(e) => setNewGroupMax(Number(e.target.value))}
+                    />
+                  </div>
+                  <label className="flex items-center gap-1.5 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={newGroupRequired}
+                      onChange={(e) => setNewGroupRequired(e.target.checked)}
+                    />
+                    Required
+                  </label>
+                  <Button size="sm" onClick={onAddGroup}>
+                    <Plus className="size-4" /> Add group
+                  </Button>
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ── Main Page ──
+
 export default function AdminProductsPage() {
   const products = useQuery(api.admin.catalog.listProducts);
 
   const createProduct = useMutation(api.admin.catalog.createProduct);
   const updateProduct = useMutation(api.admin.catalog.updateProduct);
   const deleteProduct = useMutation(api.admin.catalog.deleteProduct);
-  const createVariant = useMutation(api.admin.catalog.createVariant);
-  const createModifierGroup = useMutation(api.admin.catalog.createModifierGroup);
-  const createModifierOption = useMutation(api.admin.catalog.createModifierOption);
-
   const generateUploadUrl = useMutation(api.storage.generateUploadUrl);
-  const [selectedProductId, setSelectedProductId] = useState("");
-  const [selectedGroupId, setSelectedGroupId] = useState("");
+
+  const [editingProductId, setEditingProductId] = useState<Id<"products"> | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [uploadedImageIds, setUploadedImageIds] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const sortedProducts = useMemo(() => {
+    if (!products) return [];
+    return [...products].sort((a, b) => a.name.localeCompare(b.name));
+  }, [products]);
+
+  type ProductFormData = z.infer<typeof productSchema>;
+  const productForm = useForm<ProductFormData>({
+    // Zod 4 + @hookform/resolvers infers unknown for coerced fields; output is correct at runtime
+    resolver: zodResolver(productSchema) as Resolver<ProductFormData>,
+    defaultValues: {
+      productCode: "",
+      name: "",
+      slug: "",
+      description: "",
+      imagesCsv: "",
+      categoriesCsv: "",
+      tagsCsv: "",
+      basePrice: 0,
+      leadTimeHoursOverride: 0,
+      maxQtyPerOrder: 10,
+      inStockToday: true,
+      status: "active",
+      pickup: true,
+      delivery: true,
+      shipping: false,
+    },
+  });
 
   async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
@@ -113,67 +1266,11 @@ export default function AdminProductsPage() {
     }
   }
 
-  const sortedProducts = useMemo(() => {
-    if (!products) return [];
-    return [...products].sort((a, b) => a.name.localeCompare(b.name));
-  }, [products]);
-
-  const productForm = useForm<z.infer<typeof productSchema>>({
-    resolver: zodResolver(productSchema),
-    defaultValues: {
-      name: "",
-      slug: "",
-      description: "",
-      imagesCsv: "",
-      categoriesCsv: "",
-      tagsCsv: "",
-      basePriceCents: 0,
-      leadTimeHoursOverride: 0,
-      maxQtyPerOrder: 1,
-      inStockToday: true,
-      status: "active",
-      pickup: true,
-      delivery: true,
-      shipping: false,
-    },
-  });
-
-  const variantForm = useForm<z.infer<typeof variantSchema>>({
-    resolver: zodResolver(variantSchema),
-    defaultValues: {
-      productId: "",
-      label: "",
-      priceDeltaCents: 0,
-      sku: "",
-    },
-  });
-
-  const groupForm = useForm<z.infer<typeof modifierGroupSchema>>({
-    resolver: zodResolver(modifierGroupSchema),
-    defaultValues: {
-      productId: "",
-      name: "",
-      required: false,
-      minSelect: 0,
-      maxSelect: 1,
-      sortOrder: 0,
-    },
-  });
-
-  const optionForm = useForm<z.infer<typeof modifierOptionSchema>>({
-    resolver: zodResolver(modifierOptionSchema),
-    defaultValues: {
-      groupId: "",
-      name: "",
-      priceDeltaCents: 0,
-      sortOrder: 0,
-    },
-  });
-
   async function onCreateProduct(values: z.infer<typeof productSchema>) {
     try {
       const manualImages = parseCsv(values.imagesCsv);
       await createProduct({
+        productCode: values.productCode?.trim() || undefined,
         name: values.name,
         slug: values.slug,
         description: values.description,
@@ -181,7 +1278,7 @@ export default function AdminProductsPage() {
         status: values.status,
         categories: parseCsv(values.categoriesCsv),
         tags: parseCsv(values.tagsCsv),
-        basePriceCents: values.basePriceCents,
+        basePriceCents: dollarsToCents(values.basePrice),
         fulfillmentFlags: {
           pickup: values.pickup,
           delivery: values.delivery,
@@ -199,60 +1296,8 @@ export default function AdminProductsPage() {
     }
   }
 
-  async function onCreateVariant(values: z.infer<typeof variantSchema>) {
-    try {
-      await createVariant({
-        productId: values.productId as never,
-        label: values.label,
-        priceDeltaCents: values.priceDeltaCents,
-        sku: values.sku || undefined,
-      });
-      setStatusMessage("Variant created.");
-      variantForm.reset({ ...values, label: "", priceDeltaCents: 0, sku: "" });
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Variant create failed.");
-    }
-  }
-
-  async function onCreateGroup(values: z.infer<typeof modifierGroupSchema>) {
-    if (values.maxSelect < values.minSelect) {
-      setStatusMessage("maxSelect must be >= minSelect.");
-      return;
-    }
-    try {
-      const groupId = await createModifierGroup({
-        productId: values.productId as never,
-        name: values.name,
-        required: values.required,
-        minSelect: values.minSelect,
-        maxSelect: values.maxSelect,
-        sortOrder: values.sortOrder,
-      });
-      setSelectedGroupId(groupId);
-      setStatusMessage("Modifier group created.");
-      groupForm.reset({ ...values, name: "", minSelect: 0, maxSelect: 1, sortOrder: 0 });
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Group create failed.");
-    }
-  }
-
-  async function onCreateOption(values: z.infer<typeof modifierOptionSchema>) {
-    try {
-      await createModifierOption({
-        groupId: values.groupId as never,
-        name: values.name,
-        priceDeltaCents: values.priceDeltaCents,
-        sortOrder: values.sortOrder,
-      });
-      setStatusMessage("Modifier option created.");
-      optionForm.reset({ ...values, name: "", priceDeltaCents: 0, sortOrder: 0 });
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Option create failed.");
-    }
-  }
-
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-6">
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6">
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">Admin Catalog Manager</h1>
         <p className="text-sm text-muted-foreground">
@@ -265,17 +1310,92 @@ export default function AdminProductsPage() {
         ) : null}
       </header>
 
-      <section className="grid gap-6 lg:grid-cols-2">
+      <section className="flex flex-col gap-6">
+        {/* ── Products List (top) ── */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <CardTitle>Products</CardTitle>
+                <CardDescription>Click Edit to manage product details, variants, and modifiers</CardDescription>
+              </div>
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/admin/products/images">Bulk edit images</Link>
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {sortedProducts.map((product) => (
+              <div key={product._id} className="flex items-center gap-3 rounded-md border p-3">
+                <div className="h-12 w-12 shrink-0 overflow-hidden rounded">
+                  <ProductImage
+                    images={product.images}
+                    name={product.name}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="font-medium">{productDisplayName(product.name)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {product.productCode ? (
+                      <>Code: {product.productCode} &middot; </>
+                    ) : null}
+                    {product.slug} &middot; ${centsToDollars(product.basePriceCents)}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Badge variant={product.status === "active" ? "default" : "outline"}>
+                    {product.status}
+                  </Badge>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setEditingProductId(product._id)}
+                  >
+                    <Pencil className="mr-1 size-3.5" /> Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      await updateProduct({
+                        productId: product._id,
+                        status: product.status === "active" ? "hidden" : "active",
+                      });
+                    }}
+                  >
+                    Toggle
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={async () => {
+                      await deleteProduct({ productId: product._id });
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        {/* ── Create Product (bottom) ── */}
         <Card>
           <CardHeader>
             <CardTitle>Create Product</CardTitle>
-            <CardDescription>CAT-001, CAT-004, CAT-005, CAT-006</CardDescription>
+            <CardDescription>Add a new product to the catalog</CardDescription>
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={productForm.handleSubmit(onCreateProduct)}>
               <div className="space-y-2">
                 <Label htmlFor="name">Name</Label>
                 <Input id="name" {...productForm.register("name")} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="productCode">Product code (e.g. CAKE-001)</Label>
+                <Input id="productCode" placeholder="Optional, must be unique" {...productForm.register("productCode")} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="slug">Slug</Label>
@@ -287,8 +1407,8 @@ export default function AdminProductsPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
-                  <Label htmlFor="basePriceCents">Base price (cents)</Label>
-                  <Input id="basePriceCents" type="number" {...productForm.register("basePriceCents")} />
+                  <Label htmlFor="basePrice">Base price ($)</Label>
+                  <Input id="basePrice" type="number" step="0.01" {...productForm.register("basePrice")} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="status">Status (active|hidden)</Label>
@@ -322,19 +1442,19 @@ export default function AdminProductsPage() {
                     onChange={handleImageUpload}
                     className="text-sm file:mr-2 file:rounded file:border-0 file:bg-primary file:px-3 file:py-1 file:text-xs file:text-primary-foreground"
                   />
-                  {uploading && <span className="text-xs text-muted-foreground">Uploading…</span>}
+                  {uploading && <span className="text-xs text-muted-foreground">Uploading...</span>}
                 </div>
                 {uploadedImageIds.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {uploadedImageIds.map((id, i) => (
                       <Badge key={i} variant="secondary" className="text-xs">
-                        {id.slice(0, 12)}…
+                        {id.slice(0, 12)}...
                         <button
                           type="button"
                           className="ml-1 text-destructive"
                           onClick={() => setUploadedImageIds((prev) => prev.filter((_, j) => j !== i))}
                         >
-                          ×
+                          x
                         </button>
                       </Badge>
                     ))}
@@ -375,183 +1495,15 @@ export default function AdminProductsPage() {
             </form>
           </CardContent>
         </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Products</CardTitle>
-            <CardDescription>Quick status controls</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {sortedProducts.map((product) => (
-              <div key={product._id} className="flex items-center gap-3 rounded-md border p-3">
-                <div className="h-12 w-12 shrink-0 overflow-hidden rounded">
-                  <ProductImage
-                    images={product.images}
-                    name={product.name}
-                    className="h-full w-full object-cover"
-                  />
-                </div>
-                <div className="min-w-0 flex-1 space-y-1">
-                  <p className="truncate font-medium">{product.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {product.slug} • ${(product.basePriceCents / 100).toFixed(2)}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Badge variant={product.status === "active" ? "default" : "outline"}>
-                    {product.status}
-                  </Badge>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={async () => {
-                      await updateProduct({
-                        productId: product._id,
-                        status: product.status === "active" ? "hidden" : "active",
-                      });
-                    }}
-                  >
-                    Toggle
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={async () => {
-                      await deleteProduct({ productId: product._id });
-                    }}
-                  >
-                    Delete
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle>Create Variant</CardTitle>
-            <CardDescription>CAT-002</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="space-y-3" onSubmit={variantForm.handleSubmit(onCreateVariant)}>
-              <div className="space-y-2">
-                <Label htmlFor="variantProductId">Product ID</Label>
-                <Input
-                  id="variantProductId"
-                  value={selectedProductId}
-                  onChange={(event) => {
-                    setSelectedProductId(event.target.value);
-                    variantForm.setValue("productId", event.target.value);
-                    groupForm.setValue("productId", event.target.value);
-                  }}
-                  placeholder="Copy from product list"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="variantLabel">Label</Label>
-                <Input id="variantLabel" {...variantForm.register("label")} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="variantDelta">Price delta (cents)</Label>
-                <Input id="variantDelta" type="number" {...variantForm.register("priceDeltaCents")} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="variantSku">SKU</Label>
-                <Input id="variantSku" {...variantForm.register("sku")} />
-              </div>
-              <Button type="submit">Create variant</Button>
-            </form>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Create Modifier Group</CardTitle>
-            <CardDescription>CAT-003</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="space-y-3" onSubmit={groupForm.handleSubmit(onCreateGroup)}>
-              <div className="space-y-2">
-                <Label htmlFor="groupProductId">Product ID</Label>
-                <Input
-                  id="groupProductId"
-                  value={selectedProductId}
-                  onChange={(event) => {
-                    setSelectedProductId(event.target.value);
-                    groupForm.setValue("productId", event.target.value);
-                    variantForm.setValue("productId", event.target.value);
-                  }}
-                  placeholder="Copy from product list"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="groupName">Group name</Label>
-                <Input id="groupName" {...groupForm.register("name")} />
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="space-y-2">
-                  <Label htmlFor="minSelect">Min</Label>
-                  <Input id="minSelect" type="number" {...groupForm.register("minSelect")} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="maxSelect">Max</Label>
-                  <Input id="maxSelect" type="number" {...groupForm.register("maxSelect")} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="sortOrder">Sort</Label>
-                  <Input id="sortOrder" type="number" {...groupForm.register("sortOrder")} />
-                </div>
-              </div>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" {...groupForm.register("required")} />
-                Required
-              </label>
-              <Button type="submit">Create group</Button>
-            </form>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Create Modifier Option</CardTitle>
-            <CardDescription>CAT-003</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="space-y-3" onSubmit={optionForm.handleSubmit(onCreateOption)}>
-              <div className="space-y-2">
-                <Label htmlFor="groupId">Group ID</Label>
-                <Input
-                  id="groupId"
-                  value={selectedGroupId}
-                  onChange={(event) => {
-                    setSelectedGroupId(event.target.value);
-                    optionForm.setValue("groupId", event.target.value);
-                  }}
-                  placeholder="Created group id appears in response"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="optionName">Option name</Label>
-                <Input id="optionName" {...optionForm.register("name")} />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-2">
-                  <Label htmlFor="optionDelta">Price delta</Label>
-                  <Input id="optionDelta" type="number" {...optionForm.register("priceDeltaCents")} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="optionSortOrder">Sort order</Label>
-                  <Input id="optionSortOrder" type="number" {...optionForm.register("sortOrder")} />
-                </div>
-              </div>
-              <Button type="submit">Create option</Button>
-            </form>
-          </CardContent>
-        </Card>
-      </section>
+      {/* ── Edit Product Sheet Modal ── */}
+      {editingProductId && (
+        <EditProductSheet
+          productId={editingProductId}
+          onClose={() => setEditingProductId(null)}
+        />
+      )}
     </main>
   );
 }

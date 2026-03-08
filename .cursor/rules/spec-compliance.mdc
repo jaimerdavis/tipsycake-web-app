@@ -24,12 +24,20 @@ The authoritative specification is `SPEC.md` at the repo root. Read it before im
 
 **AI-DEV-007** Never commit secrets. Only env vars via `.env.local`.
 
+**AI-DEV-008** Never invent links or endpoints. All URLs in emails, redirects, and external links must come from: `siteSettings.siteUrl`, `NEXT_PUBLIC_SITE_URL`, or `DEFAULT_SITE_URL` in `convex/lib/storeConfig.ts`. Use real routes that exist in the app (e.g. `/admin/orders`, `/orders/[token]`).
+
 ## Workflow
 
 1. Before coding: restate requirement IDs and list files to change.
 2. After coding: provide summary, how to test, any migration steps, and risks.
 3. Keep requests small and commit frequently.
 4. Reference SPEC.md section numbers when discussing features.
+
+## Product scope (locked)
+
+- **Bundt cakes only.** No cupcakes, no other dessert types.
+- **No custom cakes.** No specialty orders, no bespoke designs.
+- **Strict catalog.** Products are the fixed list in the admin catalog. Do not suggest or implement features that imply custom cakes, cupcakes, or non-bundt items.
 
 ## Tech stack (locked)
 

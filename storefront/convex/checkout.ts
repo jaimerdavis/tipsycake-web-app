@@ -1,6 +1,20 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { requireRole } from "./lib/auth";
+import { STORE_ORIGIN } from "./lib/storeConfig";
+
+function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3959;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
 
 export const getEligibility = query({
   args: {
@@ -37,19 +51,37 @@ export const getEligibility = query({
       .withIndex("by_enabled", (q) => q.eq("enabled", true))
       .collect();
 
+    const distanceMiles =
+      cached?.distanceMiles ??
+      haversineMiles(
+        address.lat,
+        address.lng,
+        STORE_ORIGIN.lat,
+        STORE_ORIGIN.lng
+      );
     const deliveryFeeFromTier =
-      cached && deliveryTiers.length > 0
+      deliveryTiers.length > 0 && distanceMiles <= 10
         ? deliveryTiers.find(
             (tier) =>
-              cached.distanceMiles >= tier.minMiles &&
-              cached.distanceMiles < tier.maxMiles &&
+              distanceMiles >= tier.minMiles &&
+              distanceMiles < tier.maxMiles &&
               tier.enabled
           )?.feeCents ?? 0
         : 0;
 
     const deliveryEligible =
-      cached?.eligibleDelivery ?? (deliveryTiers.length === 0 ? false : deliveryFeeFromTier > 0);
+      cached?.eligibleDelivery ??
+      (distanceMiles <= 10 && deliveryTiers.some(
+        (tier) =>
+          distanceMiles >= tier.minMiles &&
+          distanceMiles < tier.maxMiles &&
+          tier.enabled
+      ));
     const shippingEligible = cached?.eligibleShipping ?? true;
+
+    const SHIPPING_FEE_OVER_10_MILES_CENTS = 2500;
+    const shippingFeeCents =
+      distanceMiles > 10 ? SHIPPING_FEE_OVER_10_MILES_CENTS : 0;
 
     return {
       address: {
@@ -62,11 +94,15 @@ export const getEligibility = query({
       delivery: {
         eligible: deliveryEligible,
         feeCents: deliveryEligible ? deliveryFeeFromTier : 0,
-        reason: deliveryEligible ? null : "Address outside configured delivery tiers",
+        reason: deliveryEligible
+          ? null
+          : distanceMiles > 10
+            ? "Address is over 10 miles — shipping available ($25 fee)"
+            : "Address outside configured delivery tiers",
       },
       shipping: {
         eligible: shippingEligible,
-        feeCents: 0,
+        feeCents: shippingFeeCents,
         reason: shippingEligible ? null : "Shipping unavailable",
       },
       cache: cached
