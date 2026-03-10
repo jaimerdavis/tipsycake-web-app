@@ -11,8 +11,10 @@ const nextConfig: NextConfig = {
     // Stub _generated files don't carry schema types, so we skip TS in `next build`.
     ignoreBuildErrors: true,
   },
+  // Align with Vercel's outputFileTracingRoot when Root Directory is storefront
+  outputFileTracingRoot: path.join(__dirname),
   turbopack: {
-    root: __dirname,
+    root: path.join(__dirname),
   },
   webpack: (config) => {
     config.resolve.modules = [
