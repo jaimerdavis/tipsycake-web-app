@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { useSearchParams } from "next/navigation";
-import { useUser } from "@clerk/nextjs";
+import { useRouter, useSearchParams } from "next/navigation";
+import { SignInButton, SignUpButton, useUser } from "@clerk/nextjs";
+import { CheckCircle2, ChevronDown } from "lucide-react";
 
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -15,11 +16,24 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { StripePaymentForm } from "@/components/StripePaymentForm";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
 
 import { getOrCreateGuestSessionId as getGuestSessionId } from "@/lib/guestSession";
+import {
+  clearPreferredFulfillment,
+  getPreferredFulfillment,
+} from "@/lib/fulfillmentPreference";
+import { productDisplayName } from "@/lib/utils";
 
 function fmt(cents: number) {
   return `$${(cents / 100).toFixed(2)}`;
@@ -93,13 +107,30 @@ export default function CheckoutPage() {
   );
 }
 
+const hasClerk = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
 function CheckoutContent() {
-  const guestSessionId = useMemo(() => getGuestSessionId(), []);
+  const router = useRouter();
+  const [guestSessionId, setGuestSessionId] = useState("");
+  useEffect(() => {
+    setGuestSessionId(getGuestSessionId());
+  }, []);
   const settings = useSiteSettings();
   const pickupAddress = settings.get("storeAddress");
+  const { user } = useUser();
+  const convertGuestCartToUser = useMutation(api.cart.convertGuestCartToUser);
+  const [mergeAttempted, setMergeAttempted] = useState(false);
 
   const cart = useQuery(api.cart.getActive, guestSessionId ? { guestSessionId } : "skip");
-  const { user } = useUser();
+
+  // When signed in with guest session, merge guest cart into user cart so order gets userId
+  useEffect(() => {
+    if (!user || !guestSessionId || mergeAttempted) return;
+    setMergeAttempted(true);
+    convertGuestCartToUser({ guestSessionId }).catch(() => {
+      // Don't reset mergeAttempted - would cause infinite retry loop on persistent errors
+    });
+  }, [user, guestSessionId, mergeAttempted, convertGuestCartToUser]);
   const clerkEmail = user?.primaryEmailAddress?.emailAddress ?? "";
   const clerkPhone = user?.primaryPhoneNumber?.phoneNumber ?? "";
   const addresses = useQuery(
@@ -107,7 +138,7 @@ function CheckoutContent() {
     guestSessionId ? { guestSessionId } : "skip"
   );
 
-  const [selectedMode, setSelectedMode] = useState<"pickup" | "delivery" | "shipping">("pickup");
+  const [selectedMode, setSelectedMode] = useState<"" | "pickup" | "delivery" | "shipping">("");
   const [selectedAddressId, setSelectedAddressId] = useState("");
   const [message, setMessage] = useState<string | null>(null);
 
@@ -135,6 +166,7 @@ function CheckoutContent() {
 
   const [savingContact, setSavingContact] = useState(false);
   const [savingFulfillment, setSavingFulfillment] = useState(false);
+  const [fulfillmentSheetOpen, setFulfillmentSheetOpen] = useState(false);
   const [savingAddress, setSavingAddress] = useState(false);
   const [couponCode, setCouponCode] = useState("");
   const [couponMessage, setCouponMessage] = useState<{ text: string; error: boolean } | null>(null);
@@ -142,15 +174,24 @@ function CheckoutContent() {
   const applyCoupon = useMutation(api.cart.applyCoupon);
   const removeCoupon = useMutation(api.cart.removeCoupon);
 
+  const GUEST_CHOSEN_KEY = "checkoutGuestChosen";
+  const [guestCheckoutChosen, setGuestCheckoutChosen] = useState(false);
+  useEffect(() => {
+    setGuestCheckoutChosen(sessionStorage.getItem(GUEST_CHOSEN_KEY) === "1");
+  }, []);
+
+  const justCompletedCartIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (paymentSuccess && cart?._id && !confirmedCartId) {
       setConfirmedCartId(cart._id);
     }
   }, [paymentSuccess, cart?._id, confirmedCartId]);
 
+  const effectiveConfirmedCartId = confirmedCartId ?? justCompletedCartIdRef.current;
   const confirmedOrder = useQuery(
     api.orders.getByCartId,
-    confirmedCartId ? { cartId: confirmedCartId as Id<"carts"> } : "skip"
+    effectiveConfirmedCartId ? { cartId: effectiveConfirmedCartId as Id<"carts"> } : "skip"
   );
 
   useEffect(() => {
@@ -159,8 +200,15 @@ function CheckoutContent() {
     const phone = cart.contactPhone ?? clerkPhone ?? "";
     setContactEmail(email);
     setContactPhone(phone);
-    if (cart.fulfillmentMode) setSelectedMode(cart.fulfillmentMode as typeof selectedMode);
     if (cart.addressId) setSelectedAddressId(cart.addressId);
+    if (!selectedMode) {
+      if (cart.fulfillmentMode) {
+        setSelectedMode(cart.fulfillmentMode);
+      } else {
+        const preferred = getPreferredFulfillment();
+        if (preferred) setSelectedMode(preferred);
+      }
+    }
     setContactSynced(true);
   }, [cart, contactSynced, clerkEmail, clerkPhone]);
 
@@ -174,11 +222,12 @@ function CheckoutContent() {
       email: clerkEmail,
       phone: clerkPhone || undefined,
     }).catch(() => {
-      autoSavedRef.current = false;
+      // Don't reset autoSavedRef - would cause repeated retries on every deps change
     });
   }, [cart?._id, cart?.contactEmail, clerkEmail, clerkPhone, setContact]);
 
   const needsAddress = selectedMode === "delivery" || selectedMode === "shipping";
+  const needsSchedulingForMode = selectedMode === "pickup" || selectedMode === "delivery";
   const eligibility = useQuery(
     api.checkout.getEligibility,
     needsAddress && selectedAddressId ? { addressId: selectedAddressId as never } : "skip"
@@ -195,9 +244,54 @@ function CheckoutContent() {
     }
   }, [selectedMode, eligibility]);
 
+  const needsScheduling = needsSchedulingForMode;
+  const contactReady = cart ? !!(cart.contactEmail && cart.contactPhone) : false;
+  const fulfillmentReady = cart ? !!cart.fulfillmentMode : false;
+  const schedulingReady = cart ? (!needsScheduling || !!cart.slotHoldId) : false;
+  const paymentReady = contactReady && fulfillmentReady && schedulingReady;
+
+  const contactSectionRef = useRef<HTMLElement>(null);
+  const fulfillmentSectionRef = useRef<HTMLElement>(null);
+  const schedulingSectionRef = useRef<HTMLElement>(null);
+  const [sectionBlockMessage, setSectionBlockMessage] = useState<{
+    contact?: string;
+    fulfillment?: string;
+    scheduling?: string;
+  } | null>(null);
+
+  const scrollToFirstBlocker = useCallback(() => {
+    setSectionBlockMessage(null);
+    if (!contactReady) {
+      setSectionBlockMessage({ contact: "Save your email and phone to continue." });
+      contactSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (!fulfillmentReady) {
+      setSectionBlockMessage({ fulfillment: "Choose a fulfillment mode to continue." });
+      fulfillmentSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (!schedulingReady) {
+      setSectionBlockMessage({ scheduling: "Select a date and time slot to continue." });
+      schedulingSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+  }, [contactReady, fulfillmentReady, schedulingReady]);
+
+  useEffect(() => {
+    setSectionBlockMessage((prev) => {
+      if (!prev) return null;
+      const next = { ...prev };
+      if (contactReady && next.contact) delete next.contact;
+      if (fulfillmentReady && next.fulfillment) delete next.fulfillment;
+      if (schedulingReady && next.scheduling) delete next.scheduling;
+      return Object.keys(next).length === 0 ? null : next;
+    });
+  }, [contactReady, fulfillmentReady, schedulingReady]);
+
   const setFulfillment = useMutation(api.checkout.setFulfillment);
   useEffect(() => {
-    if (!cart || selectedMode === "pickup") return;
+    if (!cart || !selectedMode || selectedMode === "pickup") return;
     if (!selectedAddressId) return;
     const needsApply =
       cart.fulfillmentMode !== selectedMode || cart.addressId !== selectedAddressId;
@@ -208,7 +302,10 @@ function CheckoutContent() {
       mode: selectedMode,
       addressId: selectedAddressId as never,
     })
-      .then(() => setMessage("Fulfillment updated."))
+      .then(() => {
+        clearPreferredFulfillment();
+        setMessage("Fulfillment updated.");
+      })
       .catch((err) => setMessage(err instanceof Error ? err.message : "Update failed"))
       .finally(() => setSavingFulfillment(false));
   }, [selectedMode, selectedAddressId, cart?.fulfillmentMode, cart?.addressId, cart?._id, setFulfillment]);
@@ -219,9 +316,9 @@ function CheckoutContent() {
   const releaseHold = useMutation(api.scheduling.releaseHold);
   const availableDates = useQuery(
     api.scheduling.getAvailableDates,
-    cart
+    cart && needsSchedulingForMode
       ? {
-          mode: selectedMode,
+          mode: selectedMode as "pickup" | "delivery" | "shipping",
           cartId: cart._id,
           addressId: selectedAddressId ? (selectedAddressId as never) : undefined,
         }
@@ -235,9 +332,9 @@ function CheckoutContent() {
   );
   const slots = useQuery(
     api.scheduling.getSlots,
-    cart && selectedDate
+    cart && selectedDate && needsSchedulingForMode
       ? {
-          mode: selectedMode,
+          mode: selectedMode as "pickup" | "delivery" | "shipping",
           date: selectedDate,
           cartId: cart._id,
           addressId: selectedAddressId ? (selectedAddressId as never) : undefined,
@@ -245,24 +342,177 @@ function CheckoutContent() {
       : "skip"
   );
 
+  // Show order confirmation when: (a) returning from Stripe redirect with success params, or
+  // (b) payment completed in-page (Stripe no-redirect or $0 free order) and cart was cleared
+  const isSuccessReturn = urlStatus === "success" && urlCartId;
+  const isInPageSuccess = paymentSuccess && effectiveConfirmedCartId;
+
+  // Clear guest flag when order succeeds or user signs in
+  useEffect(() => {
+    if (user || isSuccessReturn || (isInPageSuccess && confirmedOrder)) {
+      sessionStorage.removeItem(GUEST_CHOSEN_KEY);
+    }
+  }, [user, isSuccessReturn, isInPageSuccess, confirmedOrder]);
+
+  // Order confirmed — redirect signed-in users to /account after brief success display
+  const showOrderConfirmed = !cart && (isSuccessReturn || isInPageSuccess);
+  useEffect(() => {
+    if (!showOrderConfirmed || !user) return;
+    const t = setTimeout(() => router.replace("/account"), 1800);
+    return () => clearTimeout(t);
+  }, [showOrderConfirmed, user, router]);
+
+  // Auth choice: show when Clerk configured, not signed in, has cart, guest not chosen, not in success/cancelled
+  const showAuthChoice =
+    hasClerk &&
+    !user &&
+    cart &&
+    !guestCheckoutChosen &&
+    !isSuccessReturn &&
+    !isInPageSuccess &&
+    urlStatus !== "cancelled";
+
+  if (showAuthChoice) {
+    return (
+      <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6">
+        <h1 className="font-display text-4xl text-brand-text sm:text-5xl">Checkout</h1>
+        <p className="text-sm text-muted-foreground">
+          Choose how you&apos;d like to continue.
+        </p>
+        <Card className="rounded-2xl">
+          <CardContent className="flex flex-col gap-4 pt-6">
+            <div className="space-y-3">
+              <SignInButton mode="modal" forceRedirectUrl="/checkout">
+                <Button className="w-full rounded-full bg-button text-stone-50 hover:bg-button-hover">
+                  Existing customer — Log in
+                </Button>
+              </SignInButton>
+              <SignUpButton mode="modal" forceRedirectUrl="/checkout">
+                <Button className="w-full rounded-full" variant="secondary">
+                  Create account
+                </Button>
+              </SignUpButton>
+              <div className="space-y-2">
+                <Button
+                  variant="outline"
+                  className="w-full rounded-full"
+                  onClick={() => {
+                    setGuestCheckoutChosen(true);
+                    sessionStorage.setItem(GUEST_CHOSEN_KEY, "1");
+                  }}
+                >
+                  Guest checkout
+                </Button>
+                <p className="text-center text-xs text-muted-foreground">
+                  You can create an account anytime to track orders and earn rewards.
+                </p>
+              </div>
+            </div>
+            <Button variant="ghost" asChild className="w-full rounded-full">
+              <Link href="/cart">&larr; Back to cart</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </main>
+    );
+  }
+
+  if (showOrderConfirmed) {
+    return (
+      <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6">
+        <div className="animate-fade-in-up flex flex-col items-center gap-6 rounded-3xl border-2 border-emerald-200 bg-gradient-to-b from-emerald-50/80 to-white p-8 sm:p-10 shadow-lg">
+          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+            <CheckCircle2 className="h-10 w-10" strokeWidth={2} />
+          </div>
+          <div className="text-center space-y-2">
+            <h1 className="font-display text-4xl text-brand-text sm:text-5xl">
+              You&apos;re all set!
+            </h1>
+            <p className="text-lg font-medium text-emerald-800">
+              Order confirmed &middot; Thank you!
+            </p>
+          </div>
+        {confirmedOrder ? (
+          <>
+            <p className="text-sm text-center">
+              Your order <strong>#{confirmedOrder.orderNumber}</strong> has been placed.
+              {confirmedOrder.contactEmail && (
+                <> A confirmation email is on its way to{" "}
+                  <strong>{confirmedOrder.contactEmail}</strong>.
+                </>
+              )}
+            </p>
+            <div className="w-full max-w-sm rounded-xl border border-emerald-100 bg-white/80 p-4 text-sm space-y-2">
+              <p><span className="font-medium text-muted-foreground">Order:</span> #{confirmedOrder.orderNumber}</p>
+              <p><span className="font-medium text-muted-foreground">Fulfillment:</span> <span className="capitalize">{confirmedOrder.fulfillmentMode}</span></p>
+              <p><span className="font-medium text-muted-foreground">Total:</span> {fmt(confirmedOrder.totalCents)}</p>
+            </div>
+            <div className="flex flex-wrap justify-center gap-3">
+              <Button asChild className="rounded-full bg-button text-stone-50 hover:bg-button-hover">
+                <Link href={`/orders/${confirmedOrder.guestToken}`}>Track your order</Link>
+              </Button>
+              {user ? (
+                <Button asChild variant="outline" className="rounded-full">
+                  <Link href="/account">View your orders</Link>
+                </Button>
+              ) : (
+                <Button asChild variant="outline" className="rounded-full">
+                  <Link href="/products">Continue browsing</Link>
+                </Button>
+              )}
+            </div>
+            {!user && (
+              <Card className="w-full max-w-sm rounded-2xl border-emerald-200 bg-white/80">
+                <CardContent className="pt-6">
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Create an account to track this order, earn points, and get updates on new cakes.
+                  </p>
+                  <SignUpButton mode="modal" forceRedirectUrl="/account">
+                    <Button variant="outline" className="rounded-full w-full">
+                      Create account
+                    </Button>
+                  </SignUpButton>
+                </CardContent>
+              </Card>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">
+              Processing your order… You will receive a confirmation email shortly.
+            </p>
+            <Button asChild className="rounded-full bg-button text-stone-50 hover:bg-button-hover">
+              <Link href="/products">Continue browsing</Link>
+            </Button>
+          </>
+        )}
+        </div>
+      </main>
+    );
+  }
+
   if (!cart) {
     return (
       <main className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 sm:px-6">
         <h1 className="font-display text-4xl text-brand-text">Checkout</h1>
-        <p className="text-sm text-muted-foreground">No active cart yet.</p>
-        <Button asChild className="w-fit rounded-full bg-button text-stone-50 hover:bg-button-hover">
-          <Link href="/products">Browse products</Link>
-        </Button>
+        <p className="text-sm text-muted-foreground">
+          {user ? "Your cart is empty. View your orders or browse cakes." : "Your cart is empty — browse cakes?"}
+        </p>
+        <div className="flex flex-wrap gap-3">
+          {user && (
+            <Button asChild className="rounded-full bg-button text-stone-50 hover:bg-button-hover">
+              <Link href="/account">View your orders</Link>
+            </Button>
+          )}
+          <Button asChild variant={user ? "outline" : "default"} className="rounded-full">
+            <Link href="/products">{user ? "Browse cakes" : "Browse products"}</Link>
+          </Button>
+        </div>
       </main>
     );
   }
 
   const pricing = cart.pricing;
-  const contactReady = !!(cart.contactEmail || cart.contactPhone);
-  const fulfillmentReady = !!cart.fulfillmentMode;
-  const needsScheduling = selectedMode !== "shipping";
-  const schedulingReady = !needsScheduling || !!cart.slotHoldId;
-  const paymentReady = contactReady && fulfillmentReady && schedulingReady;
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6">
@@ -284,7 +534,7 @@ function CheckoutContent() {
       </header>
 
       {/* ── 1. Contact & Address ── */}
-      <section>
+      <section ref={contactSectionRef}>
         <Card className="rounded-2xl">
           <CardHeader>
             <CardTitle className="font-display text-2xl text-brand-text">
@@ -295,36 +545,58 @@ function CheckoutContent() {
                 ? "Using your account email. Update if needed."
                 : "At least one of email or phone required for order confirmation"}
             </CardDescription>
+            {sectionBlockMessage?.contact && (
+              <p className="text-sm text-amber-600 font-medium">{sectionBlockMessage.contact}</p>
+            )}
           </CardHeader>
           <CardContent className="space-y-4">
+            <form
+              autoComplete="on"
+              onSubmit={(e) => e.preventDefault()}
+              className="space-y-4"
+            >
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="contactEmail">Email</Label>
+                <Label htmlFor="contactEmail">
+                  Email <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   id="contactEmail"
+                  name="email"
                   type="email"
                   className="rounded-xl"
                   placeholder="you@example.com"
+                  autoComplete="email"
                   value={contactEmail}
                   onChange={(e) => setContactEmail(e.target.value)}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="contactPhone">Phone</Label>
+                <Label htmlFor="contactPhone">
+                  Phone <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   id="contactPhone"
+                  name="tel"
                   type="tel"
                   className="rounded-xl"
-                  placeholder="(555) 555-5555"
+                  placeholder="+1 (555) 555-5555"
+                  autoComplete="tel"
+                  title="US phone: +1 followed by 10 digits"
                   value={contactPhone}
                   onChange={(e) => setContactPhone(e.target.value)}
                 />
+                <p className="text-xs text-muted-foreground">
+                  US format: +1 followed by 10 digits (e.g. +1-954-637-7608)
+                </p>
               </div>
             </div>
             <Button
+              type="submit"
               variant="outline"
               disabled={savingContact}
-              onClick={async () => {
+              onClick={async (e) => {
+                e.preventDefault();
                 setSavingContact(true);
                 try {
                   await setContact({
@@ -342,6 +614,7 @@ function CheckoutContent() {
             >
               {savingContact ? "Saving…" : cart.contactEmail ? "Update contact" : "Save contact"}
             </Button>
+            </form>
 
             {needsAddress && (
               <>
@@ -418,6 +691,7 @@ function CheckoutContent() {
                     <Input
                       id="formatted"
                       placeholder="Full address"
+                      autoComplete="street-address"
                       value={newAddress.formatted}
                       onChange={(event) =>
                         setNewAddress((prev) => ({ ...prev, formatted: event.target.value }))
@@ -427,6 +701,7 @@ function CheckoutContent() {
                   <div className="grid grid-cols-3 gap-2">
                     <Input
                       placeholder="City"
+                      autoComplete="address-level2"
                       value={newAddress.city}
                       onChange={(event) =>
                         setNewAddress((prev) => ({ ...prev, city: event.target.value }))
@@ -434,6 +709,7 @@ function CheckoutContent() {
                     />
                     <Input
                       placeholder="State"
+                      autoComplete="address-level1"
                       value={newAddress.state}
                       onChange={(event) =>
                         setNewAddress((prev) => ({ ...prev, state: event.target.value }))
@@ -441,6 +717,7 @@ function CheckoutContent() {
                     />
                     <Input
                       placeholder="Zip"
+                      autoComplete="postal-code"
                       value={newAddress.zip}
                       onChange={(event) =>
                         setNewAddress((prev) => ({ ...prev, zip: event.target.value }))
@@ -481,62 +758,91 @@ function CheckoutContent() {
       </section>
 
       {/* ── 3. Fulfillment Mode ── */}
-      <section>
+      <section ref={fulfillmentSectionRef}>
         <Card className="rounded-2xl">
           <CardHeader>
             <CardTitle className="font-display text-2xl text-brand-text">Fulfillment</CardTitle>
             <CardDescription>How would you like to receive your order?</CardDescription>
+            {sectionBlockMessage?.fulfillment && (
+              <p className="text-sm text-amber-600 font-medium">{sectionBlockMessage.fulfillment}</p>
+            )}
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex flex-wrap gap-2">
-              {(["pickup", "delivery", "shipping"] as const).map((mode) => {
-                const deliveryDisabled = Boolean(
-                  mode === "delivery" &&
-                    needsAddress &&
-                    selectedAddressId &&
-                    eligibility &&
-                    !eligibility.delivery.eligible
-                );
-                const canApply =
-                  mode === "pickup" || (needsAddress && selectedAddressId);
-                return (
-                  <Button
-                    key={mode}
-                    variant={selectedMode === mode && cart.fulfillmentMode === mode ? "default" : "outline"}
-                    disabled={deliveryDisabled || savingFulfillment}
-                    title={
-                      deliveryDisabled
-                        ? eligibility?.delivery.reason ?? "Address over 10 miles — use shipping"
-                        : undefined
-                    }
-                    className={`rounded-full transition-all duration-150 active:scale-95 ${selectedMode === mode ? "bg-button text-stone-50 hover:bg-button-hover" : ""}`}
-                    onClick={async () => {
-                      setSelectedMode(mode);
-                      if (!canApply) return;
-                      if (cart.fulfillmentMode === mode) return;
-                      setSavingFulfillment(true);
-                      try {
-                        await setFulfillment({
-                          cartId: cart._id,
-                          mode,
-                          addressId:
-                            mode === "pickup"
-                              ? undefined
-                              : ((selectedAddressId as never) || undefined),
-                        });
-                        setMessage("Fulfillment updated.");
-                      } catch (err) {
-                        setMessage(err instanceof Error ? err.message : "Update failed");
-                      } finally {
-                        setSavingFulfillment(false);
-                      }
-                    }}
-                  >
-                    {FULFILLMENT_LABELS[mode]}
-                  </Button>
-                );
-              })}
-            </div>
+            <Sheet open={fulfillmentSheetOpen} onOpenChange={setFulfillmentSheetOpen}>
+              <SheetTrigger asChild>
+                <Button
+                  variant="outline"
+                  disabled={savingFulfillment}
+                  className="h-12 w-full justify-between rounded-xl px-4 text-left font-normal data-[state=open]:bg-accent"
+                >
+                  <span>
+                    {selectedMode
+                      ? FULFILLMENT_LABELS[selectedMode]
+                      : "Choose how to receive your order"}
+                  </span>
+                  <ChevronDown className="size-4 shrink-0 opacity-50" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="bottom" className="rounded-t-2xl">
+                <SheetHeader>
+                  <SheetTitle>Fulfillment</SheetTitle>
+                  <SheetDescription>
+                    How would you like to receive your order?
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="flex flex-col gap-2 px-6 pb-8 pt-4">
+                  {(["pickup", "delivery", "shipping"] as const).map((mode) => {
+                    const deliveryDisabled = Boolean(
+                      mode === "delivery" &&
+                        needsAddress &&
+                        selectedAddressId &&
+                        eligibility &&
+                        !eligibility.delivery.eligible
+                    );
+                    const canApply =
+                      mode === "pickup" || (needsAddress && selectedAddressId);
+                    return (
+                      <Button
+                        key={mode}
+                        variant={selectedMode === mode ? "default" : "outline"}
+                        disabled={deliveryDisabled || savingFulfillment}
+                        title={
+                          deliveryDisabled
+                            ? eligibility?.delivery.reason ?? "Address over 10 miles — use shipping"
+                            : undefined
+                        }
+                        className={`h-14 min-h-[44px] rounded-xl transition-all duration-150 active:scale-[0.98] ${selectedMode === mode ? "bg-button text-stone-50 hover:bg-button-hover" : ""}`}
+                        onClick={async () => {
+                          setSelectedMode(mode);
+                          setFulfillmentSheetOpen(false);
+                          if (!canApply) return;
+                          if (cart.fulfillmentMode === mode) return;
+                          setSavingFulfillment(true);
+                          try {
+                            await setFulfillment({
+                              cartId: cart._id,
+                              mode,
+                              addressId:
+                                mode === "pickup"
+                                  ? undefined
+                                  : ((selectedAddressId as never) || undefined),
+                            });
+                            clearPreferredFulfillment();
+                            setMessage("Fulfillment updated.");
+                          } catch (err) {
+                            setMessage(err instanceof Error ? err.message : "Update failed");
+                          } finally {
+                            setSavingFulfillment(false);
+                          }
+                        }}
+                      >
+                        {FULFILLMENT_LABELS[mode]}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </SheetContent>
+            </Sheet>
 
             {cart.fulfillmentMode === selectedMode ? (
               <p className="text-xs text-green-600">
@@ -586,11 +892,14 @@ function CheckoutContent() {
 
       {/* ── 4. Scheduling (pickup & delivery only; shipping ships within 24–48 hrs) ── */}
       {needsScheduling && (
-      <section>
+      <section ref={schedulingSectionRef}>
         <Card className="rounded-2xl">
           <CardHeader>
             <CardTitle className="font-display text-2xl text-brand-text">Scheduling</CardTitle>
             <CardDescription>Choose a date and time — required before payment</CardDescription>
+            {sectionBlockMessage?.scheduling && (
+              <p className="text-sm text-amber-600 font-medium">{sectionBlockMessage.scheduling}</p>
+            )}
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-2">
@@ -774,14 +1083,17 @@ function CheckoutContent() {
             <CardHeader>
               <CardTitle className="font-display text-2xl text-brand-text">Payment</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                {!contactReady
-                  ? "Save your contact info above to continue."
-                  : !fulfillmentReady
-                    ? "Choose a fulfillment mode above to continue."
-                    : "Select a date and time slot above to continue. Scheduling is required."}
+                Complete the steps above before payment.
               </p>
+              <Button
+                variant="outline"
+                className="rounded-full"
+                onClick={scrollToFirstBlocker}
+              >
+                Take me to the next step
+              </Button>
             </CardContent>
           </Card>
         ) : (
@@ -868,6 +1180,7 @@ function CheckoutContent() {
               <PlaceFreeOrderButton
                 cartId={cart._id}
                 onSuccess={() => {
+                  justCompletedCartIdRef.current = cart._id;
                   setPaymentSuccess(true);
                   setConfirmedCartId(cart._id);
                 }}
@@ -879,6 +1192,7 @@ function CheckoutContent() {
                   cartId={cart._id}
                   guestSessionId={guestSessionId}
                   onSuccess={() => {
+                    justCompletedCartIdRef.current = cart._id;
                     setPaymentSuccess(true);
                     setConfirmedCartId(cart._id);
                   }}

@@ -308,7 +308,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_entity", ["entityType", "entityId"])
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_entityType_createdAt", ["entityType", "createdAt"]),
 
   orderEvents: defineTable({
     orderId: v.id("orders"),
@@ -349,6 +350,8 @@ export default defineSchema({
     paypalOrderId: v.optional(v.string()),
     carrier: v.optional(v.string()),
     trackingNumber: v.optional(v.string()),
+    /** 0=none, 1=sent 1hr reminder, 2=sent 2hr reminder. Reset when status changes. */
+    lastReminderLevel: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -358,7 +361,13 @@ export default defineSchema({
     .index("by_userId", ["userId"])
     .index("by_contactEmail", ["contactEmail"])
     .index("by_status", ["status"])
-    .index("by_paymentIntentId", ["paymentIntentId"]),
+    .index("by_paymentIntentId", ["paymentIntentId"])
+    .index("by_paypalOrderId", ["paypalOrderId"])
+    .index("by_createdAt", ["createdAt"])
+    .index("by_status_createdAt", ["status", "createdAt"])
+    .index("by_fulfillmentMode_createdAt", ["fulfillmentMode", "createdAt"])
+    .index("by_status_fulfillmentMode_createdAt", ["status", "fulfillmentMode", "createdAt"])
+    .index("by_status_updatedAt", ["status", "updatedAt"]),
 
   orderItems: defineTable({
     orderId: v.id("orders"),
@@ -401,7 +410,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_cart", ["cartId"])
-    .index("by_provider", ["provider"]),
+    .index("by_provider", ["provider"])
+    .index("by_referenceId", ["referenceId"]),
 
   coupons: defineTable({
     code: v.string(),
@@ -432,7 +442,9 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_coupon", ["couponId"])
-    .index("by_user_coupon", ["userId", "couponId"]),
+    .index("by_user_coupon", ["userId", "couponId"])
+    .index("by_contactEmail_coupon", ["contactEmail", "couponId"])
+    .index("by_orderId", ["orderId"]),
 
   loyaltyAccounts: defineTable({
     userId: v.id("users"),
@@ -458,6 +470,14 @@ export default defineSchema({
     bonusType: v.union(v.literal("signup"), v.literal("share")),
     claimedAt: v.number(),
   }).index("by_user_type", ["userId", "bonusType"]),
+
+  triviaDailyCompletions: defineTable({
+    userId: v.id("users"),
+    completionDate: v.string(),
+    pointsEarned: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_user_date", ["userId", "completionDate"]),
 
   drivers: defineTable({
     userId: v.optional(v.id("users")),
@@ -505,13 +525,19 @@ export default defineSchema({
     to: v.string(),
     subject: v.optional(v.string()),
     template: v.optional(v.string()),
+    bodyPreview: v.optional(v.string()),
     status: v.union(v.literal("sent"), v.literal("skipped"), v.literal("error")),
     errorMessage: v.optional(v.string()),
     externalId: v.optional(v.string()),
+    orderId: v.optional(v.id("orders")),
+    orderNumber: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_createdAt", ["createdAt"])
-    .index("by_channel", ["channel"]),
+    .index("by_channel", ["channel"])
+    .index("by_channel_createdAt", ["channel", "createdAt"])
+    .index("by_to", ["to"])
+    .index("by_orderId", ["orderId"]),
 
   mediaLibrary: defineTable({
     storageId: v.string(),
@@ -522,4 +548,30 @@ export default defineSchema({
   })
     .index("by_createdAt", ["createdAt"])
     .index("by_storageId", ["storageId"]),
+
+  chatConversations: defineTable({
+    orderId: v.optional(v.id("orders")),
+    userId: v.optional(v.id("users")),
+    guestToken: v.optional(v.string()),
+    contactEmail: v.optional(v.string()),
+    contactName: v.optional(v.string()),
+    contactPhone: v.optional(v.string()),
+    accessToken: v.optional(v.string()),
+    status: v.union(v.literal("open"), v.literal("closed")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_orderId", ["orderId"])
+    .index("by_userId", ["userId"])
+    .index("by_guestToken", ["guestToken"])
+    .index("by_contactEmail", ["contactEmail"])
+    .index("by_status_updatedAt", ["status", "updatedAt"]),
+
+  chatMessages: defineTable({
+    conversationId: v.id("chatConversations"),
+    authorType: v.union(v.literal("customer"), v.literal("staff")),
+    authorId: v.optional(v.id("users")),
+    body: v.string(),
+    createdAt: v.number(),
+  }).index("by_conversation_createdAt", ["conversationId", "createdAt"]),
 });

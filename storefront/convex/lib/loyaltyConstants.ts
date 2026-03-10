@@ -7,3 +7,4 @@ export const POINTS_PER_ORDER = 1000;
 export const SIGNUP_BONUS_POINTS = 250;
 export const SHARE_BONUS_POINTS = 500;
 export const REDEEM_POINTS_PER_DOLLAR = 100;
+export const TRIVIA_POINTS_PER_CORRECT = 10;

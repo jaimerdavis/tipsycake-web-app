@@ -1,14 +1,22 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useAction, useConvexAuth } from "convex/react";
-import { UserButton } from "@clerk/nextjs";
+import { useClerk, useAuth, UserButton } from "@clerk/nextjs";
 import { useState, useEffect } from "react";
 
 import { api } from "../../../../convex/_generated/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { CUSTOMER_STATUS_LABELS } from "@/lib/orderStatusConfig";
+import { ChevronDown, ChevronRight, Package } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +27,7 @@ function dollars(cents: number) {
 const SHARE_BONUS_POINTS = 500;
 
 export default function AccountPage() {
+  const { isLoaded, isSignedIn } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const me = useQuery(api.users.meOrNull);
   const orders = useQuery(api.orders.listByUser);
@@ -41,6 +50,8 @@ export default function AccountPage() {
   const runDebugSync = useAction(api.usersSync.debugSyncResult);
   const debugSessionState = useQuery(api.users.debugSessionState);
   const [retryPending, setRetryPending] = useState(false);
+  const { signOut } = useClerk();
+  const router = useRouter();
 
   async function handleRetrySyncAndLink() {
     setRetryStatus("Running…");
@@ -156,6 +167,21 @@ export default function AccountPage() {
     );
   }
 
+  // Redirect to products when signed out (avoids blank/rendering state from RedirectToSignIn)
+  useEffect(() => {
+    if (isLoaded && !isSignedIn) {
+      router.replace("/products");
+    }
+  }, [isLoaded, isSignedIn, router]);
+
+  if (isLoaded && !isSignedIn) {
+    return (
+      <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
+        <p className="text-sm text-muted-foreground">Redirecting…</p>
+      </main>
+    );
+  }
+
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
       <header className="flex items-center justify-between gap-4">
@@ -195,7 +221,7 @@ export default function AccountPage() {
               <div className="mt-4 space-y-2 rounded-lg border-2 border-amber-400 bg-amber-50 p-4">
                 <p className="text-sm font-semibold text-amber-900">Orders not showing?</p>
                 <p className="text-xs text-amber-800">
-                  Sync your account with Clerk and link past orders. Try &quot;Retry sync & link&quot; first, or run the diagnostic to see what&apos;s happening.
+                  Placed an order as a guest? Create an account or log in with the same email and we&apos;ll link your order history.
                 </p>
                 <div className="flex flex-wrap gap-2" style={{ touchAction: "manipulation" }}>
                   <Button
@@ -230,66 +256,112 @@ export default function AccountPage() {
               </div>
             </>
           ) : (
-            <ul className="space-y-3">
-              {orders.map((order) => (
-                <li key={order._id}>
-                  <Link
-                    href={`/orders/${order.guestToken}`}
-                    className="block rounded-lg border p-4 transition-colors hover:bg-muted/50"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="font-medium">Order {order.orderNumber}</p>
-                        <p className="text-xs text-muted-foreground capitalize">
+            <ul className="space-y-4">
+              {orders.map((order, index) => {
+                const isLatest = index === 0;
+                const statusLabel = CUSTOMER_STATUS_LABELS[order.status] ?? order.status.replace(/_/g, " ");
+                return (
+                  <li key={order._id}>
+                    <div
+                      className={`flex flex-col gap-3 rounded-2xl p-4 sm:flex-row sm:items-center sm:justify-between transition-all ${
+                        isLatest
+                          ? "border-2 border-emerald-200 bg-gradient-to-br from-emerald-50/60 to-white shadow-md"
+                          : "border bg-card"
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {isLatest && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                              <Package className="h-3 w-3" />
+                              Latest order
+                            </span>
+                          )}
+                          <p className="font-medium">
+                            Order #{order.orderNumber}
+                          </p>
+                          <Badge variant={isLatest ? "default" : "secondary"} className="capitalize">
+                            {statusLabel}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground capitalize mt-1">
                           {order.fulfillmentMode} &middot;{" "}
-                          {new Date(order.createdAt).toLocaleDateString()}
+                          {new Date(order.createdAt).toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })}
                         </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge>{order.status}</Badge>
-                        <span className="font-semibold">
+                        <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                          {order.items
+                            .map(
+                              (item) =>
+                                `${(item.productSnapshot as { name?: string })?.name ?? "Item"} × ${item.qty}`
+                            )
+                            .join(", ")}
+                        </p>
+                        <span className="mt-1 block font-semibold">
                           {dollars(order.pricingSnapshot.totalCents)}
                         </span>
                       </div>
+                      <Button asChild variant="outline" size="sm" className="shrink-0 rounded-full">
+                        <Link href={`/orders/${order.guestToken}`}>
+                          View details
+                        </Link>
+                      </Button>
                     </div>
-                    <p className="mt-2 line-clamp-1 text-sm text-muted-foreground">
-                      {order.items
-                        .map(
-                          (item) =>
-                            `${(item.productSnapshot as { name?: string })?.name ?? "Item"} × ${item.qty}`
-                        )
-                        .join(", ")}
-                    </p>
-                  </Link>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </CardContent>
       </Card>
 
-      {shareBonusClaimed === false && (
+      <Collapsible defaultOpen={false}>
         <Card>
-          <CardHeader>
-            <CardTitle className="font-display text-xl text-brand-text">Share & Earn</CardTitle>
-            <CardDescription>
-              Share TheTipsyCake with friends and earn {SHARE_BONUS_POINTS} loyalty points (one-time)
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {shareError && (
-              <p className="text-sm text-destructive">{shareError}</p>
-            )}
-            <Button
-              onClick={handleShareAndClaim}
-              disabled={sharePending}
-              className="rounded-full bg-button text-stone-50 hover:bg-button-hover"
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="group flex w-full items-center justify-between p-6 text-left transition-colors hover:bg-muted/30 rounded-lg"
             >
-              {sharePending ? "Sharing…" : "Share & claim 500 points"}
-            </Button>
-          </CardContent>
+              <div>
+                <CardTitle className="font-display text-xl text-brand-text">
+                  Earn Points
+                </CardTitle>
+                <CardDescription>
+                  Share and earn loyalty points
+                </CardDescription>
+              </div>
+              <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground group-data-[state=open]:hidden" />
+              <ChevronDown className="h-5 w-5 shrink-0 hidden text-muted-foreground group-data-[state=open]:block" />
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <CardContent className="space-y-6 pt-0">
+              {shareBonusClaimed === false && (
+                <div className="space-y-2 rounded-lg border p-4">
+                  <p className="font-medium">Share & Earn — {SHARE_BONUS_POINTS} points (one-time)</p>
+                  <p className="text-sm text-muted-foreground">
+                    Share TheTipsyCake with friends and claim your bonus.
+                  </p>
+                  {shareError && (
+                    <p className="text-sm text-destructive">{shareError}</p>
+                  )}
+                  <Button
+                    onClick={handleShareAndClaim}
+                    disabled={sharePending}
+                    size="sm"
+                    className="rounded-full bg-button text-stone-50 hover:bg-button-hover"
+                  >
+                    {sharePending ? "Sharing…" : "Share & claim 500 points"}
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </CollapsibleContent>
         </Card>
-      )}
+      </Collapsible>
 
       {orders?.length === 0 && me && (
         <Card className="border-amber-200 bg-amber-50/30">
@@ -320,12 +392,15 @@ export default function AccountPage() {
         </Card>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button asChild variant="outline" size="sm">
           <Link href="/products">Browse Menu</Link>
         </Button>
         <Button asChild size="sm">
           <Link href="/cart">View Cart</Link>
+        </Button>
+        <Button asChild variant="outline" size="sm">
+          <Link href="/account/privacy">Privacy &amp; Data</Link>
         </Button>
       </div>
     </main>

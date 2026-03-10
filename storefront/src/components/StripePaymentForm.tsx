@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import {
   Elements,
@@ -123,6 +123,13 @@ export function StripePaymentForm({
       setLoading(false);
     }
   }, [cartId, guestSessionId, createPaymentIntent, onError]);
+
+  // Auto-initialize payment when component mounts so form appears without extra click
+  useEffect(() => {
+    if (stripeKey && !clientSecret && !loading && !initError) {
+      initPayment();
+    }
+  }, [stripeKey, clientSecret, loading, initError, initPayment]);
 
   if (!stripeKey) {
     return (

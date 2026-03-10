@@ -36,8 +36,9 @@ const CONTENT_FIELDS = [
   {
     group: "Menu Page",
     fields: [
-      { key: "contentMenuTitle", label: "Page title", placeholder: "Our Menu", inputType: "input" as const },
+      { key: "contentMenuTitle", label: "Page title", placeholder: "Order Your Cake", inputType: "input" as const },
       { key: "contentMenuSubtitle", label: "Page subtitle", placeholder: "Browse our handcrafted selection...", inputType: "textarea" as const },
+      { key: "contentMenuTextUs", label: "Text us link (bottom of page)", placeholder: "Text us at 954-xxx-xxxx", inputType: "input" as const },
     ],
   },
 ] as const;

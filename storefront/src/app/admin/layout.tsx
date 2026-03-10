@@ -4,10 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
-import { Logo } from "@/components/Logo";
+import { AdminGuard } from "@/components/AdminGuard";
 import { Button } from "@/components/ui/button";
 
 const navItems = [
+  { href: "/admin/orders", label: "Orders" },
   { href: "/admin/products", label: "Products" },
   { href: "/admin/modifiers", label: "Store Modifiers" },
   { href: "/admin/gallery", label: "Gallery" },
@@ -15,11 +16,13 @@ const navItems = [
   { href: "/admin/coupons", label: "Coupons" },
   { href: "/admin/loyalty", label: "Loyalty" },
   { href: "/admin/scheduling", label: "Scheduling" },
-  { href: "/admin/orders", label: "Orders" },
+  { href: "/admin/chat", label: "Chat" },
   { href: "/admin/drivers", label: "Drivers" },
   { href: "/admin/tracking", label: "Tracking" },
   { href: "/admin/analytics", label: "Analytics" },
   { href: "/admin/audit-logs", label: "Audit Logs" },
+  { href: "/admin/settings/email", label: "Email Settings" },
+  { href: "/admin/settings/sms", label: "SMS Settings" },
   { href: "/admin/settings", label: "Settings" },
 ];
 
@@ -62,7 +65,10 @@ export default function AdminLayout({
         </div>
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto">
           {navItems.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active =
+              item.href === "/admin/settings"
+                ? pathname === "/admin/settings"
+                : pathname.startsWith(item.href);
             return (
               <Link
                 key={item.href}
@@ -90,7 +96,7 @@ export default function AdminLayout({
       </aside>
 
       {/* Main content */}
-      <div className="flex flex-1 flex-col overflow-y-auto">
+      <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
         {/* Mobile top bar */}
         <div className="sticky top-0 z-30 flex h-12 items-center gap-3 border-b bg-background px-4 md:hidden">
           <Button
@@ -103,13 +109,8 @@ export default function AdminLayout({
           </Button>
           <span className="text-sm font-semibold">TipsyCake Admin</span>
         </div>
-        <main key={pathname} className="relative flex-1">
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center" aria-hidden>
-            <div className="animate-logo-transition">
-              <Logo className="h-12 w-12 text-brand-text opacity-80" />
-            </div>
-          </div>
-          <div className="relative z-0 animate-accordion-in">{children}</div>
+        <main key={pathname} className="relative min-w-0 flex-1 overflow-x-hidden">
+          <AdminGuard>{children}</AdminGuard>
         </main>
       </div>
     </div>

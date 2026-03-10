@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 
 import { api } from "../../../../convex/_generated/api";
@@ -27,9 +27,9 @@ import { getOrCreateGuestSessionId } from "@/lib/guestSession";
 import { productDisplayName } from "@/lib/utils";
 
 export default function CartPage() {
-  const guestSessionId = useMemo(() => {
-    if (typeof window === "undefined") return "";
-    return getOrCreateGuestSessionId();
+  const [guestSessionId, setGuestSessionId] = useState("");
+  useEffect(() => {
+    setGuestSessionId(getOrCreateGuestSessionId());
   }, []);
   const [couponCode, setCouponCode] = useState("");
   const [couponMessage, setCouponMessage] = useState<{ text: string; error: boolean } | null>(null);
@@ -62,8 +62,8 @@ export default function CartPage() {
   if (!cart) {
     return (
       <main className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 sm:px-6">
-        <h1 className="font-display text-4xl text-brand-text">Cake Order Summary</h1>
-        <p className="text-sm text-muted-foreground">No active cart yet.</p>
+        <h1 className="font-display text-4xl text-brand-text">Nothing in the oven yet</h1>
+        <p className="text-sm text-muted-foreground">Your cart is empty.</p>
         <Button asChild className="w-fit rounded-full bg-button text-stone-50 hover:bg-button-hover transition-all active:scale-[0.97]">
           <Link href="/products">Browse cakes</Link>
         </Button>
@@ -213,7 +213,7 @@ export default function CartPage() {
                   className="rounded-xl"
                   value={couponCode}
                   onChange={(event) => setCouponCode(event.target.value)}
-                  placeholder="WELCOME10"
+                  placeholder="Enter code"
                 />
               </div>
               <div className="flex gap-2">

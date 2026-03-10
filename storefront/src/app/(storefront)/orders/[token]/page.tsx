@@ -5,9 +5,9 @@ import { useQuery } from "convex/react";
 
 import { api } from "../../../../../convex/_generated/api";
 import { productDisplayName } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DeliveryMap } from "@/components/DeliveryMap";
+import { OrderStatusStepper } from "@/components/OrderStatusStepper";
 
 const CARRIER_TRACKING_URLS: Record<string, (num: string) => string> = {
   ups: (n) => `https://www.ups.com/track?tracknum=${n}`,
@@ -55,8 +55,12 @@ export default function OrderStatusByTokenPage() {
           Order #{order.orderNumber} &middot;{" "}
           <span className="capitalize">{order.fulfillmentMode}</span>
         </p>
-        <Badge className="rounded-full">{order.status}</Badge>
       </header>
+
+      <section className="space-y-3 sm:space-y-4">
+        <h2 className="sr-only">Order progress</h2>
+        <OrderStatusStepper order={order} />
+      </section>
 
       {order.fulfillmentMode === "delivery" && deliveryTracking && (
         <Card className="rounded-2xl">
@@ -112,23 +116,6 @@ export default function OrderStatusByTokenPage() {
 
       <Card className="rounded-2xl">
         <CardHeader>
-          <CardTitle className="font-display text-2xl text-brand-text">Timeline</CardTitle>
-          <CardDescription>Status updates for your order</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {order.events.map((event) => (
-            <div key={event._id} className="flex items-center justify-between rounded border p-2 text-sm">
-              <span className="capitalize">{event.status.replace(/_/g, " ")}</span>
-              <span className="text-xs text-muted-foreground">
-                {new Date(event.createdAt).toLocaleString()}
-              </span>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-2xl">
-        <CardHeader>
           <CardTitle className="font-display text-2xl text-brand-text">Items</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
@@ -149,6 +136,10 @@ export default function OrderStatusByTokenPage() {
           </div>
         </CardContent>
       </Card>
+
+      <p className="text-center text-sm text-muted-foreground">
+        Questions about your order? Use the <strong>Chat</strong> button to reach us.
+      </p>
     </main>
   );
 }

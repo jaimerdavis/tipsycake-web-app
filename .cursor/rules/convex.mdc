@@ -267,6 +267,10 @@ export const generateUploadUrl = mutation({
 - Use `Id<"tableName">` and `Doc<"tableName">` from `./_generated/dataModel` for strict typing.
 - Use `as const` for string literals in discriminated unions.
 
+## Deployment Workflow
+
+**Adding or renaming Convex modules:** After creating new files in `convex/` (e.g., `trivia.ts`) or renaming modules, you **must** run `npx convex dev` (or `npx convex deploy`) from the storefront directory. Convex discovers modules from the filesystem and pushes them to the backend; the client `api` object is generated from the deployed backend. If a module exists in source but was never deployed, client calls like `api.trivia.getTriviaState` will fail with "Cannot read properties of undefined (reading 'trivia')". Always confirm deployment succeeds before assuming new modules are available.
+
 ## Key Rules Summary
 
 - `args` AND `returns` validators on every function — no exceptions.

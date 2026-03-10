@@ -30,7 +30,12 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const STORE_FIELDS = [
   { key: "storeName", label: "Store Name", placeholder: "The Tipsy Cake" },
-  { key: "storePhone", label: "Store Phone", placeholder: "(555) 555-5555" },
+  {
+    key: "storePhone",
+    label: "Store Phone",
+    placeholder: "+15551234567",
+    help: "For owner SMS alerts. Use E.164: +1 + 10 digits (e.g. +15551234567).",
+  },
   { key: "storeEmail", label: "Store Email", placeholder: "hello@thetipsycake.com" },
   { key: "storeAddress", label: "Store Address", placeholder: "123 Main St, Anytown, ST 12345" },
   { key: "storeTimezone", label: "Timezone", placeholder: "America/New_York" },
@@ -543,24 +548,12 @@ export default function AdminSettingsPage() {
                   value={form[field.key] ?? ""}
                   onChange={(e) => updateField(field.key, e.target.value)}
                 />
+                {"help" in field && field.help && (
+                  <p className="text-xs text-muted-foreground">{field.help}</p>
+                )}
               </div>
             ))}
           </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Email Settings ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Email Settings</CardTitle>
-          <CardDescription>
-            Templates, abandoned cart incentives ($1 off coupon), test emails, and notification logs.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button asChild variant="outline">
-            <Link href="/admin/settings/email">Configure email</Link>
-          </Button>
         </CardContent>
       </Card>
 

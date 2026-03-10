@@ -6,6 +6,7 @@ import { v } from "convex/values";
 import { computePricingSnapshot, computeUnitPriceCents } from "./lib/pricing";
 import { computeCouponDiscount } from "./coupons";
 import { REDEEM_POINTS_PER_DOLLAR } from "./lib/loyaltyConstants";
+import { isValidUSPhone, normalizePhoneToE164 } from "./lib/phoneUtils";
 
 const modifierSelectionValidator = v.array(
   v.object({
@@ -257,6 +258,7 @@ export const addItem = mutation({
     qty: v.number(),
     modifiers: modifierSelectionValidator,
     itemNote: v.optional(v.string()),
+    preferredFulfillmentMode: v.optional(v.literal("pickup")),
   },
   handler: async (ctx, args) => {
     if (args.qty <= 0) throw new Error("Quantity must be positive");
@@ -290,7 +292,16 @@ export const addItem = mutation({
       updatedAt: now,
     });
 
-    await ctx.db.patch(cart._id, { updatedAt: now });
+    const patchPayload: { updatedAt: number; fulfillmentMode?: "pickup" } = {
+      updatedAt: now,
+    };
+    if (
+      args.preferredFulfillmentMode === "pickup" &&
+      !cart.fulfillmentMode
+    ) {
+      patchPayload.fulfillmentMode = "pickup";
+    }
+    await ctx.db.patch(cart._id, patchPayload);
     return cart._id;
   },
 });
@@ -498,16 +509,10 @@ export const setTip = mutation({
 });
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_REGEX = /^[\d\s\-\(\)\+\.]{10,20}$/;
 
 function isValidEmail(s: string): boolean {
   const trimmed = s.trim().toLowerCase();
   return trimmed.length > 0 && EMAIL_REGEX.test(trimmed);
-}
-
-function isValidPhone(s: string): boolean {
-  const digits = s.replace(/\D/g, "");
-  return digits.length >= 10 && PHONE_REGEX.test(s.trim());
 }
 
 export const setContact = mutation({
@@ -524,17 +529,81 @@ export const setContact = mutation({
     const phone = args.phone?.trim();
 
     const hasValidEmail = email !== undefined && email !== "" && isValidEmail(email);
-    const hasValidPhone = phone !== undefined && phone !== "" && isValidPhone(phone);
+    const hasValidPhone = phone !== undefined && phone !== "" && isValidUSPhone(phone);
 
-    if (!hasValidEmail && !hasValidPhone) {
-      throw new Error("At least one of valid email or phone is required");
+    if (!hasValidEmail || !hasValidPhone) {
+      throw new Error("Both email and phone are required. Phone must be US format: +1 and 10 digits (e.g. +1-954-637-7608)");
+    }
+
+    const normalizedPhone = normalizePhoneToE164(phone!);
+    if (!normalizedPhone) {
+      throw new Error("Invalid phone. Use US format: +1 followed by 10 digits (e.g. +19546377608)");
     }
 
     await ctx.db.patch(args.cartId, {
       contactEmail: hasValidEmail ? email!.toLowerCase() : undefined,
-      contactPhone: hasValidPhone ? phone : undefined,
+      contactPhone: hasValidPhone ? normalizedPhone : undefined,
       updatedAt: Date.now(),
     });
     return args.cartId;
+  },
+});
+
+/**
+ * Merge guest cart into user cart when signing in at checkout.
+ * Moves all items and metadata from guest cart to user cart so the order gets userId.
+ * Call when a signed-in user lands on checkout with a guest session (e.g. after sign-in).
+ */
+export const convertGuestCartToUser = mutation({
+  args: {
+    guestSessionId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    const tokenIdentifier = identity && typeof identity === "object" && identity !== null
+      ? (identity as { tokenIdentifier?: string }).tokenIdentifier
+      : undefined;
+    if (!tokenIdentifier) return;
+
+    const guestCart = await ctx.db
+      .query("carts")
+      .withIndex("by_owner_status", (q) =>
+        q.eq("ownerType", "guest").eq("ownerId", args.guestSessionId).eq("status", "active")
+      )
+      .unique();
+
+    if (!guestCart) return;
+
+    const guestItems = await ctx.db
+      .query("cartItems")
+      .withIndex("by_cart", (q) => q.eq("cartId", guestCart._id))
+      .collect();
+
+    if (guestItems.length === 0) return;
+
+    const userCart = await getOrCreateActiveCart(ctx, "user", tokenIdentifier);
+    const now = Date.now();
+
+    for (const item of guestItems) {
+      await ctx.db.patch(item._id, { cartId: userCart._id, updatedAt: now });
+    }
+
+    await ctx.db.patch(userCart._id, {
+      contactEmail: guestCart.contactEmail,
+      contactPhone: guestCart.contactPhone,
+      fulfillmentMode: guestCart.fulfillmentMode,
+      addressId: guestCart.addressId,
+      tipCents: guestCart.tipCents,
+      appliedCouponId: guestCart.appliedCouponId,
+      appliedCouponCode: guestCart.appliedCouponCode,
+      appliedLoyaltyPoints: guestCart.appliedLoyaltyPoints,
+      slotHoldId: guestCart.slotHoldId,
+      updatedAt: now,
+    });
+
+    await ctx.db.patch(guestCart._id, {
+      status: "abandoned",
+      updatedAt: now,
+    });
   },
 });

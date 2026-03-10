@@ -156,7 +156,7 @@ export const createStripeSession = action({
       metadata: {
         cartId: String(args.cartId),
       },
-      success_url: `${siteUrl}/checkout?status=success`,
+      success_url: `${siteUrl}/checkout?status=success&cartId=${args.cartId}`,
       cancel_url: `${siteUrl}/checkout?status=cancelled`,
     });
 

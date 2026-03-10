@@ -1,4 +1,5 @@
 import { mutation, query } from "../_generated/server";
+import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 
@@ -6,6 +7,7 @@ import { requireRole } from "../lib/auth";
 import { renderStatusUpdate } from "../lib/emailTemplates";
 
 const NOTIFY_STATUSES = new Set([
+  "order_accepted",
   "in_production",
   "ready_for_pickup",
   "out_for_delivery",
@@ -14,6 +16,8 @@ const NOTIFY_STATUSES = new Set([
   "completed",
   "canceled",
 ]);
+
+const OWNER_COMPLETE_STATUSES = new Set(["completed", "delivered", "shipped"]);
 
 /** Debug: find orders by contactEmail. Use to verify linking. */
 export const listByContactEmail = query({
@@ -42,27 +46,49 @@ export const list = query({
     fulfillmentMode: v.optional(
       v.union(v.literal("pickup"), v.literal("delivery"), v.literal("shipping"))
     ),
+    paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
     await requireRole(ctx, "admin", "manager", "kitchen", "dispatcher");
-    let orders = await ctx.db.query("orders").collect();
-    if (args.status) {
-      orders = orders.filter((order) => order.status === args.status);
-    }
-    if (args.fulfillmentMode) {
-      orders = orders.filter((order) => order.fulfillmentMode === args.fulfillmentMode);
-    }
-    orders.sort((a, b) => b.createdAt - a.createdAt);
 
-    return await Promise.all(
-      orders.map(async (order) => {
+    let paginated;
+    if (args.status && args.fulfillmentMode) {
+      paginated = await ctx.db
+        .query("orders")
+        .withIndex("by_status_fulfillmentMode_createdAt", (q) =>
+          q.eq("status", args.status!).eq("fulfillmentMode", args.fulfillmentMode!)
+        )
+        .order("desc")
+        .paginate(args.paginationOpts);
+    } else if (args.status) {
+      paginated = await ctx.db
+        .query("orders")
+        .withIndex("by_status_createdAt", (q) => q.eq("status", args.status!))
+        .order("desc")
+        .paginate(args.paginationOpts);
+    } else if (args.fulfillmentMode) {
+      paginated = await ctx.db
+        .query("orders")
+        .withIndex("by_fulfillmentMode_createdAt", (q) =>
+          q.eq("fulfillmentMode", args.fulfillmentMode!)
+        )
+        .order("desc")
+        .paginate(args.paginationOpts);
+    } else {
+      paginated = await ctx.db
+        .query("orders")
+        .withIndex("by_createdAt")
+        .order("desc")
+        .paginate(args.paginationOpts);
+    }
+
+    const enrichedPage = await Promise.all(
+      paginated.page.map(async (order) => {
         const items = await ctx.db
           .query("orderItems")
           .withIndex("by_order", (q) => q.eq("orderId", order._id))
           .collect();
-        const user = order.userId
-          ? await ctx.db.get(order.userId)
-          : null;
+        const user = order.userId ? await ctx.db.get(order.userId) : null;
         return {
           ...order,
           items,
@@ -71,6 +97,11 @@ export const list = query({
         };
       })
     );
+
+    return {
+      ...paginated,
+      page: enrichedPage,
+    };
   },
 });
 
@@ -128,6 +159,7 @@ export const updateStatus = mutation({
     await ctx.db.patch(args.orderId, {
       status: args.status,
       updatedAt: now,
+      lastReminderLevel: undefined,
     });
     await ctx.db.insert("orderEvents", {
       orderId: args.orderId,
@@ -138,21 +170,46 @@ export const updateStatus = mutation({
       createdAt: now,
     });
 
-    if (NOTIFY_STATUSES.has(args.status) && order.contactEmail) {
+    if (NOTIFY_STATUSES.has(args.status) && (order.contactEmail || order.contactPhone)) {
       const settingsRows = await ctx.db.query("siteSettings").collect();
-      const storeName = Object.fromEntries(settingsRows.map((r) => [r.key, r.value])).storeName ?? "TheTipsyCake";
+      const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+      const storeName = settings.storeName ?? "TheTipsyCake";
+      const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
       const rendered = await renderStatusUpdate(ctx, {
         storeName,
         orderNumber: order.orderNumber,
         status: args.status,
+        carrier: order.carrier,
+        trackingNumber: order.trackingNumber,
       });
       await ctx.scheduler.runAfter(0, internal.notifications.sendOrderStatusUpdate, {
-        email: order.contactEmail,
+        email: order.contactEmail?.trim() || undefined,
+        phone: order.contactPhone?.trim() || undefined,
         orderNumber: order.orderNumber,
+        orderId: order._id,
         status: args.status,
+        statusLink: `${siteUrl}/orders/${order.guestToken}`,
         subjectOverride: rendered.subject,
         htmlOverride: rendered.html,
       });
+    }
+
+    if (OWNER_COMPLETE_STATUSES.has(args.status)) {
+      const settingsRows = await ctx.db.query("siteSettings").collect();
+      const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+      const storeEmail = settings.storeEmail?.trim();
+      const notifyOwner = settings.notifyOwnerOnOrder !== "false";
+      if (storeEmail && notifyOwner) {
+        await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderComplete, {
+          email: storeEmail,
+          phone: settings.storePhone?.trim() || undefined,
+          orderNumber: order.orderNumber,
+          orderId: order._id,
+          status: args.status,
+          carrier: order.carrier,
+          trackingNumber: order.trackingNumber,
+        });
+      }
     }
 
     return args.orderId;
@@ -176,6 +233,7 @@ export const markReadyForDelivery = mutation({
     await ctx.db.patch(args.orderId, {
       status: "ready_for_delivery",
       updatedAt: now,
+      lastReminderLevel: undefined,
     });
     await ctx.db.insert("orderEvents", {
       orderId: args.orderId,
@@ -219,6 +277,7 @@ export const assignDriver = mutation({
     await ctx.db.patch(args.orderId, {
       status: "out_for_delivery",
       updatedAt: now,
+      lastReminderLevel: undefined,
     });
     await ctx.db.insert("orderEvents", {
       orderId: args.orderId,
@@ -227,18 +286,23 @@ export const assignDriver = mutation({
       actorType: "admin",
       createdAt: now,
     });
-    if (order.contactEmail) {
+    if (order.contactEmail || order.contactPhone) {
       const settingsRows = await ctx.db.query("siteSettings").collect();
-      const storeName = Object.fromEntries(settingsRows.map((r) => [r.key, r.value])).storeName ?? "TheTipsyCake";
+      const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+      const storeName = settings.storeName ?? "TheTipsyCake";
+      const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
       const rendered = await renderStatusUpdate(ctx, {
         storeName,
         orderNumber: order.orderNumber,
         status: "out_for_delivery",
       });
       await ctx.scheduler.runAfter(0, internal.notifications.sendOrderStatusUpdate, {
-        email: order.contactEmail,
+        email: order.contactEmail?.trim() || undefined,
+        phone: order.contactPhone?.trim() || undefined,
         orderNumber: order.orderNumber,
+        orderId: order._id,
         status: "out_for_delivery",
+        statusLink: `${siteUrl}/orders/${order.guestToken}`,
         subjectOverride: rendered.subject,
         htmlOverride: rendered.html,
       });
@@ -258,16 +322,34 @@ export const setTracking = mutation({
     const order = await ctx.db.get(args.orderId);
     if (!order) throw new Error("Order not found");
 
+    const now = Date.now();
     await ctx.db.patch(args.orderId, {
       carrier: args.carrier,
       trackingNumber: args.trackingNumber,
       status: "shipped",
-      updatedAt: Date.now(),
+      updatedAt: now,
+      lastReminderLevel: undefined,
     });
 
-    if (order.contactEmail) {
-      const settingsRows = await ctx.db.query("siteSettings").collect();
-      const storeName = Object.fromEntries(settingsRows.map((r) => [r.key, r.value])).storeName ?? "TheTipsyCake";
+    const settingsRows = await ctx.db.query("siteSettings").collect();
+    const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+    const storeEmail = settings.storeEmail?.trim();
+    const notifyOwner = settings.notifyOwnerOnOrder !== "false";
+    if (storeEmail && notifyOwner) {
+      await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderComplete, {
+        email: storeEmail,
+        phone: settings.storePhone?.trim() || undefined,
+        orderNumber: order.orderNumber,
+        orderId: order._id,
+        status: "shipped",
+        carrier: args.carrier,
+        trackingNumber: args.trackingNumber,
+      });
+    }
+
+    if (order.contactEmail || order.contactPhone) {
+      const storeName = settings.storeName ?? "TheTipsyCake";
+      const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
       const rendered = await renderStatusUpdate(ctx, {
         storeName,
         orderNumber: order.orderNumber,
@@ -276,11 +358,14 @@ export const setTracking = mutation({
         trackingNumber: args.trackingNumber,
       });
       await ctx.scheduler.runAfter(0, internal.notifications.sendOrderStatusUpdate, {
-        email: order.contactEmail,
+        email: order.contactEmail?.trim() || undefined,
+        phone: order.contactPhone?.trim() || undefined,
         orderNumber: order.orderNumber,
+        orderId: order._id,
         status: "shipped",
         carrier: args.carrier,
         trackingNumber: args.trackingNumber,
+        statusLink: `${siteUrl}/orders/${order.guestToken}`,
         subjectOverride: rendered.subject,
         htmlOverride: rendered.html,
       });

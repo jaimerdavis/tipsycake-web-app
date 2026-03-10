@@ -3,42 +3,15 @@
 import Link from "next/link";
 import { startTransition, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import { SignInButton, SignUpButton, useAuth, useClerk } from "@clerk/nextjs";
 
 import { AuthNav } from "@/components/AuthNav";
+import { BottomNav } from "@/components/BottomNav";
+import { ChatWidgetUniversal } from "@/components/ChatWidgetUniversal";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
-
-function PageTransition({
-  children,
-  logoUrl,
-}: {
-  children: React.ReactNode;
-  logoUrl?: string | null;
-}) {
-  const pathname = usePathname();
-  return (
-    <div key={pathname} className="relative min-h-0 flex-1">
-      <div
-        className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
-        aria-hidden
-      >
-        <div className="animate-logo-transition">
-          {logoUrl ? (
-            <img
-              src={logoUrl}
-              alt=""
-              className="h-14 w-14 rounded-lg object-contain opacity-90"
-            />
-          ) : (
-            <Logo className="h-14 w-14 text-brand-text opacity-90" />
-          )}
-        </div>
-      </div>
-      <div className="relative z-0 pointer-events-auto animate-accordion-in">{children}</div>
-    </div>
-  );
-}
 
 const navLinks = [
   { href: "/products", label: "Menu" },
@@ -51,10 +24,14 @@ export default function StorefrontLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const { isSignedIn } = useAuth();
+  const { signOut } = useClerk();
   const settings = useSiteSettings();
   const logoUrl = settings.get("logoUrl");
   const storeName = settings.get("storeName") || "TheTipsyCake";
   const faviconUrl = settings.get("faviconUrl");
+  const storePhone = settings.get("storePhone")?.trim();
+  const smsHref = storePhone ? `sms:${storePhone.replace(/\D/g, "").length === 10 ? `+1${storePhone.replace(/\D/g, "")}` : storePhone.replace(/\D/g, "")}` : null;
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
@@ -74,15 +51,22 @@ export default function StorefrontLayout({
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <header className="sticky top-0 z-40 border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/60">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4 sm:gap-6">
-          <Link href="/" className="flex items-center shrink-0">
+          <Link href="/" className="flex shrink-0 items-center">
             {logoUrl ? (
               <img src={logoUrl} alt={storeName} className="h-10 w-10 rounded-md object-contain" />
             ) : (
               <Logo className="h-9 w-9 text-brand-text" />
             )}
           </Link>
+
+          {/* Page title — products: "Order Your Cake" */}
+          {pathname.startsWith("/products") && (
+            <span className="flex-1 truncate text-center font-display text-lg font-bold text-brand-text sm:text-xl">
+              {settings.get("contentMenuTitle") || "Order Your Cake"}
+            </span>
+          )}
 
           {/* Desktop nav */}
           <nav className="hidden items-center gap-1 sm:flex">
@@ -103,9 +87,14 @@ export default function StorefrontLayout({
           </nav>
 
           <div className="ml-auto flex hidden items-center gap-2 sm:flex">
+            {smsHref && (
+              <Button asChild variant="outline" size="sm" className="rounded-full">
+                <a href={smsHref}>Send us a text</a>
+              </Button>
+            )}
             {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && <AuthNav />}
             <Button asChild variant="ghost" size="sm" className="rounded-full">
-              <Link href="/admin/products">Admin</Link>
+              <Link href="/admin">Admin</Link>
             </Button>
           </div>
 
@@ -144,58 +133,101 @@ export default function StorefrontLayout({
 
         {/* Mobile dropdown */}
         {mobileOpen && (
-          <nav className="flex flex-col border-t bg-background px-4 py-3 sm:hidden animate-fade-in">
-            {navLinks.map((link) => {
-              const active = pathname.startsWith(link.href);
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                    active
-                      ? "bg-secondary text-foreground"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                  }`}
-                >
-                  {link.label}
-                </Link>
-              );
-            })}
-            {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && (
-              <Link
-                href="/account"
-                className="rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          <nav className="flex flex-col gap-3 border-t bg-background px-4 py-4 sm:hidden animate-fade-in">
+            {smsHref && (
+              <a
+                href={smsHref}
+                className="flex items-center justify-center rounded-full bg-button px-4 py-3 text-sm font-medium text-stone-50 hover:bg-button-hover"
               >
-                Account
-              </Link>
+                Send us a text
+              </a>
             )}
-            <Link
-              href="/admin/products"
-              className="rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              Admin
-            </Link>
+            {/* Account & Admin section (top) */}
+            <div className="flex flex-col gap-1 rounded-lg bg-muted/50 px-2 py-2">
+              {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY &&
+                (isSignedIn ? (
+                  <>
+                    <Link
+                      href="/account"
+                      className={`rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
+                        pathname.startsWith("/account")
+                          ? "bg-secondary text-foreground"
+                          : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                      }`}
+                    >
+                      My Account
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => void signOut()}
+                      className="rounded-md px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                      Sign out
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <SignInButton mode="modal">
+                      <button
+                        type="button"
+                        className="w-full rounded-md px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      >
+                        Log in
+                      </button>
+                    </SignInButton>
+                    <SignUpButton mode="modal">
+                      <button
+                        type="button"
+                        className="w-full rounded-md px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      >
+                        Create account
+                      </button>
+                    </SignUpButton>
+                  </>
+                ))}
+              <Link
+                href="/admin"
+                className={`rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
+                  pathname.startsWith("/admin")
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                }`}
+              >
+                Admin
+              </Link>
+            </div>
+            <Separator />
+            {/* Menu & Cart section */}
+            <div className="flex flex-col gap-1">
+              {navLinks.map((link) => {
+                const active = pathname.startsWith(link.href);
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                      active
+                        ? "bg-secondary text-foreground"
+                        : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                    }`}
+                  >
+                    {link.label}
+                  </Link>
+                );
+              })}
+            </div>
           </nav>
         )}
       </header>
 
-      <main className="flex-1">
-        <PageTransition logoUrl={logoUrl}>{children}</PageTransition>
+      <main className="flex-1 pb-20 sm:pb-0">
+        <div key={pathname} className="animate-page-content-in">
+          {children}
+        </div>
       </main>
 
-      <footer className="border-t bg-muted/40">
-        <div className="mx-auto flex w-full max-w-6xl flex-col items-center gap-2 px-4 py-6 text-center text-xs text-muted-foreground sm:flex-row sm:justify-between sm:text-left">
-          <p>&copy; {new Date().getFullYear()} {storeName}. All rights reserved.</p>
-          <div className="flex gap-4">
-            <Link href="/products" className="hover:text-foreground transition-colors">
-              Menu
-            </Link>
-            <Link href="/cart" className="hover:text-foreground transition-colors">
-              Cart
-            </Link>
-          </div>
-        </div>
-      </footer>
+      <ChatWidgetUniversal />
+      <BottomNav />
     </div>
   );
 }

@@ -1,26 +1,29 @@
 import { query } from "../_generated/server";
+import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import { requireRole } from "../lib/auth";
 
 export const list = query({
   args: {
     entityType: v.optional(v.string()),
-    limit: v.optional(v.number()),
+    paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
     await requireRole(ctx, "admin", "manager");
 
-    const limit = args.limit ?? 100;
-    let logs = await ctx.db
+    if (args.entityType) {
+      return await ctx.db
+        .query("auditLogs")
+        .withIndex("by_entityType_createdAt", (q) =>
+          q.eq("entityType", args.entityType!)
+        )
+        .order("desc")
+        .paginate(args.paginationOpts);
+    }
+    return await ctx.db
       .query("auditLogs")
       .withIndex("by_createdAt")
       .order("desc")
-      .take(limit);
-
-    if (args.entityType) {
-      logs = logs.filter((log) => log.entityType === args.entityType);
-    }
-
-    return logs;
+      .paginate(args.paginationOpts);
   },
 });

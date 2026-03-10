@@ -88,7 +88,11 @@ export const getAvailableDates = query({
       globalLeadTimeHours: rules.globalLeadTimeHours,
       productLeadTimeHours: (rules.productLeadTimeHours ?? {}) as Record<string, number>,
     });
-    const earliest = new Date(now.getTime() + leadHours * 60 * 60 * 1000);
+    // Same-day allowed for pickup/delivery; shipping uses lead time
+    const earliest =
+      args.mode === "pickup" || args.mode === "delivery"
+        ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0)
+        : new Date(now.getTime() + leadHours * 60 * 60 * 1000);
 
     const dates: string[] = [];
     for (let i = 0; i < 14; i++) {
@@ -168,11 +172,24 @@ export const getSlots = query({
       return { available: [], blocked: [{ slotStart: "00:00", reason: "CLOSED" }], selectedSlotKey: null };
     }
 
+    // Same-day pickup/delivery: only offer 5:00 PM, 5:30 PM, 6:00 PM (shipping unchanged)
+    const isSameDay = args.date === dateToYmd(now);
+    if (
+      isSameDay &&
+      (args.mode === "pickup" || args.mode === "delivery")
+    ) {
+      slotStarts = ["17:00", "17:30", "18:00"];
+    }
+
     const leadHours = await computeCartLeadTimeHours(ctx, args.cartId as unknown as string, {
       globalLeadTimeHours: rules.globalLeadTimeHours,
       productLeadTimeHours: (rules.productLeadTimeHours ?? {}) as Record<string, number>,
     });
-    const earliestAllowed = new Date(now.getTime() + leadHours * 60 * 60 * 1000);
+    // Same-day pickup/delivery: fixed 5–6 PM slots, skip lead-time block (store manages capacity)
+    const earliestAllowed =
+      isSameDay && (args.mode === "pickup" || args.mode === "delivery")
+        ? new Date(targetDate.getTime() - 1) // any slot today passes
+        : new Date(now.getTime() + leadHours * 60 * 60 * 1000);
 
     const blackout = await ctx.db
       .query("blackoutDates")
@@ -358,22 +375,20 @@ export const expireHolds = internalMutation({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();
-    const held = await ctx.db
+    const expired = await ctx.db
       .query("slotHolds")
-      .withIndex("by_status_expiresAt", (q) => q.eq("status", "held"))
-      .collect();
+      .withIndex("by_status_expiresAt", (q) =>
+        q.eq("status", "held").lte("expiresAt", now)
+      )
+      .take(200);
 
-    let expiredCount = 0;
-    for (const hold of held) {
-      if (hold.expiresAt <= now) {
-        await ctx.db.patch(hold._id, {
-          status: "expired",
-          updatedAt: now,
-        });
-        expiredCount += 1;
-      }
+    for (const hold of expired) {
+      await ctx.db.patch(hold._id, {
+        status: "expired",
+        updatedAt: now,
+      });
     }
-    return { expiredCount };
+    return { expiredCount: expired.length };
   },
 });
 

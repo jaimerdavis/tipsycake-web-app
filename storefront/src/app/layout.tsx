@@ -67,7 +67,7 @@ export default function RootLayout({
         {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? (
           <ClerkProvider
             publishableKey={process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
-            afterSignOutUrl="/"
+            afterSignOutUrl="/products"
           >
             <ConvexClientProvider>{children}</ConvexClientProvider>
           </ClerkProvider>

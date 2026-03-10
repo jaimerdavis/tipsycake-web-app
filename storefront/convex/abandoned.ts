@@ -110,6 +110,7 @@ export const scanAndNotify = internalMutation({
         await ctx.scheduler.runAfter(0, internal.notifications.sendSms, {
           to: cart.contactPhone,
           body: `Your cart is waiting: ${restoreUrl}`,
+          template: "abandoned_cart",
         });
       }
 

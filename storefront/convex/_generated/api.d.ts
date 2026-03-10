@@ -10,6 +10,8 @@
 
 import type * as abandoned from "../abandoned.js";
 import type * as abandonedCron from "../abandonedCron.js";
+import type * as accountDeletion from "../accountDeletion.js";
+import type * as accountDeletionAction from "../accountDeletionAction.js";
 import type * as addresses from "../addresses.js";
 import type * as admin_analytics from "../admin/analytics.js";
 import type * as admin_auditLogs from "../admin/auditLogs.js";
@@ -23,6 +25,7 @@ import type * as admin_settings from "../admin/settings.js";
 import type * as admin_shipping from "../admin/shipping.js";
 import type * as cart from "../cart.js";
 import type * as catalog from "../catalog.js";
+import type * as chat from "../chat.js";
 import type * as checkout from "../checkout.js";
 import type * as coupons from "../coupons.js";
 import type * as crons from "../crons.js";
@@ -39,6 +42,8 @@ import type * as lib_storeConfig from "../lib/storeConfig.js";
 import type * as loyalty from "../loyalty.js";
 import type * as maps from "../maps.js";
 import type * as notifications from "../notifications.js";
+import type * as orderReminders from "../orderReminders.js";
+import type * as orderRemindersCron from "../orderRemindersCron.js";
 import type * as orders from "../orders.js";
 import type * as paymentLogs from "../paymentLogs.js";
 import type * as payments from "../payments.js";
@@ -46,6 +51,7 @@ import type * as scheduling from "../scheduling.js";
 import type * as seed from "../seed.js";
 import type * as storage from "../storage.js";
 import type * as tracking from "../tracking.js";
+import type * as trivia from "../trivia.js";
 import type * as users from "../users.js";
 import type * as usersSync from "../usersSync.js";
 import type * as webhookProcessors from "../webhookProcessors.js";
@@ -60,6 +66,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   abandoned: typeof abandoned;
   abandonedCron: typeof abandonedCron;
+  accountDeletion: typeof accountDeletion;
+  accountDeletionAction: typeof accountDeletionAction;
   addresses: typeof addresses;
   "admin/analytics": typeof admin_analytics;
   "admin/auditLogs": typeof admin_auditLogs;
@@ -73,6 +81,7 @@ declare const fullApi: ApiFromModules<{
   "admin/shipping": typeof admin_shipping;
   cart: typeof cart;
   catalog: typeof catalog;
+  chat: typeof chat;
   checkout: typeof checkout;
   coupons: typeof coupons;
   crons: typeof crons;
@@ -89,6 +98,8 @@ declare const fullApi: ApiFromModules<{
   loyalty: typeof loyalty;
   maps: typeof maps;
   notifications: typeof notifications;
+  orderReminders: typeof orderReminders;
+  orderRemindersCron: typeof orderRemindersCron;
   orders: typeof orders;
   paymentLogs: typeof paymentLogs;
   payments: typeof payments;
@@ -96,6 +107,7 @@ declare const fullApi: ApiFromModules<{
   seed: typeof seed;
   storage: typeof storage;
   tracking: typeof tracking;
+  trivia: typeof trivia;
   users: typeof users;
   usersSync: typeof usersSync;
   webhookProcessors: typeof webhookProcessors;

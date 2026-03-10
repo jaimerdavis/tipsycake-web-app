@@ -4,15 +4,11 @@ const isAdminRoute = createRouteMatcher(["/admin(.*)"]);
 const isAccountRoute = createRouteMatcher(["/account(.*)"]);
 
 export default clerkMiddleware(async (auth, req) => {
-  try {
-    const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-    if (!publishableKey) return;
+  const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  if (!publishableKey) return;
 
-    if (isAdminRoute(req) || isAccountRoute(req)) {
-      await auth.protect();
-    }
-  } catch (err) {
-    console.error("[middleware] Clerk error:", err);
+  if (isAdminRoute(req) || isAccountRoute(req)) {
+    await auth.protect();
   }
 });
 

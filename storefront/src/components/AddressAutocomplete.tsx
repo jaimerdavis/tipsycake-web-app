@@ -135,7 +135,7 @@ export function AddressAutocomplete({
     <Input
       ref={inputRef}
       placeholder={placeholder}
-      autoComplete="off"
+      autoComplete="street-address"
     />
   );
 }

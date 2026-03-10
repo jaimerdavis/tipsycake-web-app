@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Resolver } from "react-hook-form";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -19,12 +20,23 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ProductImageGallery } from "@/components/ProductImage";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Info } from "lucide-react";
 import { getOrCreateGuestSessionId } from "@/lib/guestSession";
+import { clearPreferredFulfillment, getPreferredFulfillment } from "@/lib/fulfillmentPreference";
 import { productDisplayName } from "@/lib/utils";
 
 const customizationSchema = z.object({
@@ -123,7 +135,10 @@ function ProductDetailContent() {
   const editingCartItemId = searchParams.get("cartItemId");
   const isEditMode = !!editingCartItemId;
 
-  const guestSessionId = useMemo(() => getOrCreateGuestSessionId(), []);
+  const [guestSessionId, setGuestSessionId] = useState("");
+  useEffect(() => {
+    setGuestSessionId(getOrCreateGuestSessionId());
+  }, []);
   const settings = useSiteSettings();
   const product = useQuery(api.catalog.getProduct, {
     productId: productId as never,
@@ -140,6 +155,8 @@ function ProductDetailContent() {
   const [groupErrors, setGroupErrors] = useState<GroupErrorMap>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [prefilled, setPrefilled] = useState(false);
+  const [showShapeModal, setShowShapeModal] = useState(false);
+  const shapeSectionRef = useRef<HTMLDivElement>(null);
 
   type FormData = z.infer<typeof customizationSchema>;
   const form = useForm<FormData>({
@@ -169,20 +186,6 @@ function ProductDetailContent() {
     setSelectedOptionsByGroup(modsByGroup);
     setPrefilled(true);
   }, [isEditMode, existingItem, prefilled, form]);
-
-  useEffect(() => {
-    if (!product || isEditMode) return;
-    const shapeGroup = product.modifierGroups.find((g) => g.name === "Shape");
-    if (!shapeGroup?.required || shapeGroup.options.length === 0) return;
-    const current = selectedOptionsByGroup[shapeGroup._id as string] ?? [];
-    if (current.length > 0) return;
-    const firstOpt = shapeGroup.options[0];
-    if (!firstOpt) return;
-    setSelectedOptionsByGroup((prev) => ({
-      ...prev,
-      [shapeGroup._id as string]: [firstOpt._id as string],
-    }));
-  }, [product, isEditMode]);
 
   const maxQty = useMemo(() => {
     if (!product) return 10;
@@ -307,7 +310,12 @@ function ProductDetailContent() {
 
     setGroupErrors(modifierValidation);
     setSubmitError(null);
-    if (Object.keys(modifierValidation).length > 0) return;
+    if (Object.keys(modifierValidation).length > 0) {
+      if (shapeGroup && modifierValidation[shapeGroup._id as string]) {
+        setShowShapeModal(true);
+      }
+      return;
+    }
 
     const modifiersPayload = Object.entries(selectedOptionsByGroup).flatMap(
       ([groupId, optionIds]) =>
@@ -324,6 +332,7 @@ function ProductDetailContent() {
           modifiers: modifiersPayload,
         });
       } else {
+        const preferredMode = getPreferredFulfillment();
         await addItem({
           guestSessionId: guestSessionId || undefined,
           productId: product._id,
@@ -331,7 +340,12 @@ function ProductDetailContent() {
           qty: values.qty,
           itemNote: values.note || undefined,
           modifiers: modifiersPayload,
+          preferredFulfillmentMode:
+            preferredMode === "pickup" ? "pickup" : undefined,
         });
+        if (preferredMode === "pickup") {
+          clearPreferredFulfillment();
+        }
       }
       router.push("/cart");
     } catch (err) {
@@ -394,7 +408,8 @@ function ProductDetailContent() {
     );
 
   return (
-    <main className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 pb-24 sm:gap-6 sm:px-6">
+    <>
+    <main className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 pb-28 sm:gap-6 sm:px-6 sm:pb-24">
       <header className="animate-fade-in-up space-y-4">
         <Button asChild variant="outline" size="sm" className="rounded-full">
           <Link href={isEditMode ? "/cart" : "/products"}>
@@ -413,7 +428,8 @@ function ProductDetailContent() {
               maxImages={4}
             />
           </div>
-          {shapeSelectorBlock}
+          <p className="text-xs text-muted-foreground/80">Each cake is made with care, so final appearance may vary slightly from the photo.</p>
+          <div ref={shapeSectionRef}>{shapeSelectorBlock}</div>
         </div>
         <div className="space-y-2">
           <div className="flex items-center gap-3">
@@ -421,20 +437,6 @@ function ProductDetailContent() {
             {isEditMode && <Badge variant="secondary" className="rounded-full">Editing</Badge>}
           </div>
           <p className="text-muted-foreground">{product.description}</p>
-          <div className="flex flex-wrap items-center gap-3">
-            <span
-              className={`text-2xl font-bold text-brand-text transition-all duration-300 ${
-                priceAnimating ? "scale-110" : "scale-100"
-              }`}
-            >
-              ${(liveTotal / 100).toFixed(2)}
-            </span>
-            {liveTotal !== product.basePriceCents && (
-              <span className="text-sm text-muted-foreground line-through animate-fade-in">
-                ${(product.basePriceCents / 100).toFixed(2)}
-              </span>
-            )}
-          </div>
         </div>
       </header>
 
@@ -446,7 +448,7 @@ function ProductDetailContent() {
           </CardHeader>
         )}
         <CardContent className={!isEditMode ? "pt-6" : ""}>
-          <form className="space-y-6" onSubmit={form.handleSubmit(onSubmit)}>
+          <form id="product-form" className="space-y-6" onSubmit={form.handleSubmit(onSubmit)}>
             {product.variants.length > 0 && (
               <div className="space-y-2">
                 <Label htmlFor="variantId" className="font-display text-xl text-brand-text">Variant</Label>
@@ -621,19 +623,68 @@ function ProductDetailContent() {
               <p className="text-sm text-red-600">{submitError}</p>
             )}
 
-            <div className="flex items-center gap-3">
-              <Button type="submit" className="rounded-full bg-button text-stone-50 hover:bg-button-hover transition-all duration-200 active:scale-[0.97]">
-                {isEditMode ? "Update Cake Purchase" : "Purchase Cake"}
-              </Button>
-              {isEditMode && (
+            {isEditMode && (
+              <div className="flex items-center gap-3">
                 <Button type="button" variant="outline" className="rounded-full" asChild>
                   <Link href="/cart">Cancel</Link>
                 </Button>
-              )}
-            </div>
+              </div>
+            )}
           </form>
         </CardContent>
       </Card>
     </main>
+    {typeof document !== "undefined" &&
+      createPortal(
+        <div className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background/95 pt-3 pb-safe shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] supports-[backdrop-filter]:bg-background/90 sm:pt-4">
+          <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-4 sm:px-6">
+            <div className="flex flex-col gap-0.5">
+              <span
+                className={`text-xl font-bold text-brand-text transition-transform duration-300 sm:text-2xl ${
+                  priceAnimating ? "scale-110" : "scale-100"
+                }`}
+              >
+                ${(liveTotal / 100).toFixed(2)}
+              </span>
+              {liveTotal !== product.basePriceCents && (
+                <span className="text-sm text-muted-foreground line-through">
+                  ${(product.basePriceCents / 100).toFixed(2)} base
+                </span>
+              )}
+            </div>
+            <Button
+              type="submit"
+              form="product-form"
+              className="min-h-12 shrink-0 rounded-full bg-button px-6 text-stone-50 hover:bg-button-hover active:scale-[0.98] sm:px-8"
+            >
+              {isEditMode ? "Update Cake Purchase" : "Purchase Cake"}
+            </Button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+    <AlertDialog open={showShapeModal} onOpenChange={setShowShapeModal}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Choose a cake shape</AlertDialogTitle>
+          <AlertDialogDescription>
+            Please select a shape for your cake before adding it to the cart. We&apos;ll take you there now.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => {
+              setShowShapeModal(false);
+              shapeSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+          >
+            Show me
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  </>
   );
 }

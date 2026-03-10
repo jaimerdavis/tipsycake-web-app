@@ -135,6 +135,25 @@ export const debugSessionState = query({
   },
 });
 
+/**
+ * Internal: promote a user to admin by email. Run from Convex Dashboard (Functions > Run)
+ * or: npx convex run users:promoteToAdminByEmail '{"email":"user@example.com"}'
+ */
+export const promoteToAdminByEmail = internalMutation({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    const normalized = args.email.trim().toLowerCase();
+    if (!normalized) throw new Error("Email is required");
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", normalized))
+      .unique();
+    if (!user) throw new Error(`User not found: ${args.email}`);
+    await ctx.db.patch(user._id, { role: "admin", updatedAt: Date.now() });
+    return { userId: user._id, email: user.email };
+  },
+});
+
 /** Internal: update Convex user email by tokenIdentifier. Called from syncUserEmailFromClerk action. */
 export const updateEmailByToken = internalMutation({
   args: {

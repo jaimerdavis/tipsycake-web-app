@@ -59,6 +59,15 @@ export const getEligibility = query({
         STORE_ORIGIN.lat,
         STORE_ORIGIN.lng
       );
+    // If no tiers configured: delivery eligible within 10 miles at $0 (store can add tiers later)
+    const hasMatchingTier =
+      deliveryTiers.length > 0 &&
+      deliveryTiers.some(
+        (tier) =>
+          distanceMiles >= tier.minMiles &&
+          distanceMiles < tier.maxMiles &&
+          tier.enabled
+      );
     const deliveryFeeFromTier =
       deliveryTiers.length > 0 && distanceMiles <= 10
         ? deliveryTiers.find(
@@ -71,12 +80,7 @@ export const getEligibility = query({
 
     const deliveryEligible =
       cached?.eligibleDelivery ??
-      (distanceMiles <= 10 && deliveryTiers.some(
-        (tier) =>
-          distanceMiles >= tier.minMiles &&
-          distanceMiles < tier.maxMiles &&
-          tier.enabled
-      ));
+      (distanceMiles <= 10 && (hasMatchingTier || deliveryTiers.length === 0));
     const shippingEligible = cached?.eligibleShipping ?? true;
 
     const SHIPPING_FEE_OVER_10_MILES_CENTS = 2500;

@@ -215,6 +215,21 @@
   animation: page-in 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+@keyframes page-content-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-page-content-in {
+  animation: page-content-in 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 .animate-accordion-in {
   animation: accordion-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
   transform-origin: top;
@@ -249,8 +264,17 @@
   to { transform: rotate(360deg); }
 }
 
+@keyframes menu-cake-spin-reverse {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+
 .animate-menu-cake-spin {
-  animation: menu-cake-spin 24s linear infinite;
+  animation: menu-cake-spin 36s linear infinite;
+}
+
+.animate-menu-cake-spin-reverse {
+  animation: menu-cake-spin-reverse 36s linear infinite;
 }
 
 @keyframes title-shimmer {
@@ -266,4 +290,22 @@
 
 .animate-title-shimmer {
   animation: title-shimmer 3s ease-in-out infinite;
+}
+
+@keyframes status-glow {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(234, 179, 8, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(234, 179, 8, 0.7);
+  }
+}
+
+.animate-status-glow {
+  animation: status-glow 2s ease-in-out infinite;
+}
+
+/* PWA safe area support */
+.pb-safe {
+  padding-bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));
 }

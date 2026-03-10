@@ -30,7 +30,10 @@ function formatTime(ts: number) {
 export default function EmailSettingsPage() {
   const settings = useQuery(api.admin.settings.getAll);
   const templateConfig = useQuery(api.admin.settings.getEmailTemplateConfig);
-  const logs = useQuery(api.admin.notificationLogs.list, { limit: 30 });
+  const emailLogs = useQuery(api.admin.notificationLogs.list, {
+    channel: "email",
+    limit: 30,
+  });
   const setBatch = useMutation(api.admin.settings.setBatch);
   const sendTestEmail = useMutation(api.admin.settings.sendTestEmail);
 
@@ -104,11 +107,11 @@ export default function EmailSettingsPage() {
           href="/admin/settings"
           className="text-sm text-muted-foreground hover:text-foreground"
         >
-          ← Back to Settings
+          ← Settings
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight">Email Settings</h1>
         <p className="text-sm text-muted-foreground">
-          Templates, abandoned cart incentives, and notification logs.
+          Email templates, abandoned cart incentives, and email logs.
         </p>
         {message && <Badge variant="secondary">{message}</Badge>}
       </header>
@@ -279,51 +282,70 @@ export default function EmailSettingsPage() {
         </CardContent>
       </Card>
 
-      {/* ── Recent Logs ── */}
+      {/* ── Email Logs ── */}
       <Card>
         <CardHeader>
-          <CardTitle>Recent Notification Logs</CardTitle>
+          <CardTitle>Email Logs</CardTitle>
           <CardDescription>
-            Sent, skipped (no Postmark), or error. Check for delivery issues.
+            Sent (with Postmark Message ID), skipped (no Postmark), or error.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {logs === undefined ? (
+          {emailLogs === undefined ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
-          ) : logs.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No logs yet.</p>
+          ) : emailLogs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No email logs yet.</p>
           ) : (
-            <div className="space-y-2 max-h-80 overflow-y-auto">
-              {logs.map((log) => (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {emailLogs.map((log) => (
                 <div
                   key={log._id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded border bg-muted/30 px-3 py-2 text-sm"
+                  className="flex flex-col gap-1.5 rounded border bg-muted/30 px-3 py-2.5 text-sm"
                 >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Badge
-                      variant={
-                        log.status === "error"
-                          ? "destructive"
-                          : log.status === "skipped"
-                            ? "secondary"
-                            : "default"
-                      }
-                      className="capitalize shrink-0"
-                    >
-                      {log.status}
-                    </Badge>
-                    <span className="truncate">{log.channel}</span>
-                    {log.template && (
-                      <span className="text-muted-foreground truncate">{log.template}</span>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 min-w-0">
+                      <Badge
+                        variant={
+                          log.status === "error"
+                            ? "destructive"
+                            : log.status === "skipped"
+                              ? "secondary"
+                              : "default"
+                        }
+                        className="capitalize shrink-0"
+                      >
+                        {log.status}
+                      </Badge>
+                      {log.template && (
+                        <span className="text-muted-foreground truncate">{log.template}</span>
+                      )}
+                      {log.orderNumber && (
+                        <span className="text-muted-foreground">#{log.orderNumber}</span>
+                      )}
+                    </div>
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {formatTime(log.createdAt)}
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="truncate text-muted-foreground">
+                      To: {log.to}
+                      {log.subject != null && <> · {log.subject}</>}
+                    </span>
+                    {log.bodyPreview != null && (
+                      <span className="truncate text-xs text-muted-foreground italic">
+                        &quot;{log.bodyPreview}&quot;
+                      </span>
                     )}
-                    <span className="truncate text-muted-foreground">To: {log.to}</span>
-                    {log.errorMessage && (
-                      <span className="text-destructive truncate">{log.errorMessage}</span>
+                    {log.status === "sent" && log.externalId != null && (
+                      <span className="text-xs text-green-700 dark:text-green-400 font-mono">
+                        Postmark ID: {log.externalId}
+                      </span>
+                    )}
+                    {log.errorMessage != null && (
+                      <span className="text-destructive text-xs">{log.errorMessage}</span>
                     )}
                   </div>
-                  <span className="text-xs text-muted-foreground shrink-0">
-                    {formatTime(log.createdAt)}
-                  </span>
                 </div>
               ))}
             </div>

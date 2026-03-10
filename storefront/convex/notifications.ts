@@ -2,9 +2,12 @@
 
 import { action, internalAction } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { DEFAULT_SITE_URL } from "./lib/storeConfig";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
+
+import { normalizePhoneToE164 } from "./lib/phoneUtils";
 
 async function logNotification(
   ctx: ActionCtx,
@@ -13,9 +16,12 @@ async function logNotification(
     to: string;
     subject?: string;
     template?: string;
+    bodyPreview?: string;
     status: "sent" | "skipped" | "error";
     errorMessage?: string;
     externalId?: string;
+    orderId?: Id<"orders">;
+    orderNumber?: string;
   }
 ) {
   await ctx.runMutation(internal.admin.notificationLogs.insert, params);
@@ -23,7 +29,14 @@ async function logNotification(
 
 async function sendEmailAndLog(
   ctx: ActionCtx,
-  params: { to: string; subject: string; html: string; template?: string }
+  params: {
+    to: string;
+    subject: string;
+    html: string;
+    template?: string;
+    orderId?: Id<"orders">;
+    orderNumber?: string;
+  }
 ) {
   try {
     const result = await sendViaPostmark({
@@ -36,8 +49,11 @@ async function sendEmailAndLog(
       to: params.to,
       subject: params.subject,
       template: params.template,
+      bodyPreview: params.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 80),
       status: result.status === "logged" ? "skipped" : "sent",
       externalId: result.id !== "dev-noop" ? result.id : undefined,
+      orderId: params.orderId,
+      orderNumber: params.orderNumber,
     });
     return result;
   } catch (err) {
@@ -46,8 +62,11 @@ async function sendEmailAndLog(
       to: params.to,
       subject: params.subject,
       template: params.template,
+      bodyPreview: params.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 80),
       status: "error",
       errorMessage: err instanceof Error ? err.message : String(err),
+      orderId: params.orderId,
+      orderNumber: params.orderNumber,
     });
     throw err;
   }
@@ -77,6 +96,7 @@ async function sendViaPostmark(params: {
     },
     body: JSON.stringify({
       From: params.from ?? process.env.EMAIL_FROM ?? "TheTipsyCake <orders@thetipsycake.com>",
+      ReplyTo: process.env.EMAIL_REPLY_TO ?? "debbie@thetipsycake.com",
       To: params.to,
       Subject: params.subject,
       HtmlBody: params.html,
@@ -97,10 +117,16 @@ async function sendViaTwilio(params: { to: string; body: string }) {
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_FROM_NUMBER;
 
+  const normalizedTo = normalizePhoneToE164(params.to);
+  if (!normalizedTo) {
+    console.error("[notifications] Invalid phone for SMS, need E.164:", params.to);
+    throw new Error(`Invalid phone number for SMS: "${params.to}". Use format +1XXXXXXXXXX or 10-digit US number.`);
+  }
+
   if (!accountSid || !authToken || !fromNumber) {
     console.log("[notifications] Twilio not configured, logging SMS:", {
-      to: params.to,
-      body: params.body.slice(0, 60),
+      to: normalizedTo,
+      body: params.body.slice(0, 80),
     });
     return { sid: "dev-noop", status: "logged" };
   }
@@ -113,7 +139,7 @@ async function sendViaTwilio(params: { to: string; body: string }) {
       Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
     },
     body: new URLSearchParams({
-      To: params.to,
+      To: normalizedTo,
       From: fromNumber,
       Body: params.body,
     }),
@@ -155,28 +181,53 @@ export const sendSms = internalAction({
   args: {
     to: v.string(),
     body: v.string(),
+    template: v.optional(v.string()),
+    orderId: v.optional(v.id("orders")),
+    orderNumber: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const normalizedTo = normalizePhoneToE164(args.to);
+    if (!normalizedTo) {
+      await logNotification(ctx, {
+        channel: "sms",
+        to: args.to,
+        template: args.template,
+        bodyPreview: args.body.slice(0, 80),
+        status: "error",
+        errorMessage: `Invalid phone for SMS: "${args.to}". Use E.164 (e.g. +15551234567) or 10-digit US.`,
+        orderId: args.orderId,
+        orderNumber: args.orderNumber,
+      });
+      throw new Error(`Invalid phone number for SMS: "${args.to}". Use format +1XXXXXXXXXX or 10-digit US number.`);
+    }
     try {
       const result = await sendViaTwilio({ to: args.to, body: args.body });
       await logNotification(ctx, {
         channel: "sms",
-        to: args.to,
+        to: normalizedTo,
+        template: args.template,
+        bodyPreview: args.body.slice(0, 80),
         status: result.status === "logged" ? "skipped" : "sent",
         externalId: result.sid !== "dev-noop" ? result.sid : undefined,
+        orderId: args.orderId,
+        orderNumber: args.orderNumber,
       });
       return {
         ...result,
         channel: "sms",
-        to: args.to,
-        bodyPreview: args.body.slice(0, 32),
+        to: normalizedTo,
+        bodyPreview: args.body.slice(0, 80),
       };
     } catch (err) {
       await logNotification(ctx, {
         channel: "sms",
-        to: args.to,
+        to: normalizedTo,
+        template: args.template,
+        bodyPreview: args.body.slice(0, 80),
         status: "error",
         errorMessage: err instanceof Error ? err.message : String(err),
+        orderId: args.orderId,
+        orderNumber: args.orderNumber,
       });
       throw err;
     }
@@ -195,6 +246,7 @@ export const sendOrderConfirmation = internalAction({
   args: {
     email: v.string(),
     orderNumber: v.string(),
+    orderId: v.optional(v.id("orders")),
     fulfillmentMode: v.string(),
     totalCents: v.number(),
     scheduledSlotKey: v.optional(v.string()),
@@ -203,12 +255,14 @@ export const sendOrderConfirmation = internalAction({
     htmlOverride: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const orderContext = { orderId: args.orderId, orderNumber: args.orderNumber };
     if (args.subjectOverride && args.htmlOverride) {
       return await sendEmailAndLog(ctx, {
         to: args.email,
         subject: args.subjectOverride,
         html: args.htmlOverride,
         template: "orderConfirmation",
+        ...orderContext,
       });
     }
 
@@ -245,7 +299,111 @@ export const sendOrderConfirmation = internalAction({
       subject: `TipsyCake Order ${args.orderNumber} Confirmed`,
       html,
       template: "orderConfirmation",
+      ...orderContext,
     });
+  },
+});
+
+/** Sent to store owner when an order reaches a completion status (completed/delivered/shipped). */
+export const sendOwnerOrderComplete = internalAction({
+  args: {
+    email: v.string(),
+    phone: v.optional(v.string()),
+    orderNumber: v.string(),
+    orderId: v.optional(v.id("orders")),
+    status: v.string(),
+    carrier: v.optional(v.string()),
+    trackingNumber: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const statusLabels: Record<string, string> = {
+      completed: "Order Complete (Picked Up)",
+      delivered: "Cake Delivered",
+      shipped: "Cake Shipped",
+    };
+    const label = statusLabels[args.status] ?? args.status;
+
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://order.tipsycake.com";
+    const trackingRow =
+      args.carrier && args.trackingNumber
+        ? `<tr><td style="padding: 8px 0; font-weight: bold;">Tracking</td><td>${args.carrier}: ${args.trackingNumber}</td></tr>`
+        : "";
+
+    const html = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Order Complete</h2>
+        <p>Order <strong>${args.orderNumber}</strong> has reached status: <strong>${label}</strong>.</p>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr><td style="padding: 8px 0; font-weight: bold;">Order #</td><td>${args.orderNumber}</td></tr>
+          <tr><td style="padding: 8px 0; font-weight: bold;">Status</td><td>${label}</td></tr>
+          ${trackingRow}
+        </table>
+        <p style="margin-top: 24px;"><a href="${siteUrl}/admin/orders" style="color: #e11d48; font-weight: bold;">View in Admin</a></p>
+      </div>
+    `.trim();
+
+    await sendEmailAndLog(ctx, {
+      to: args.email,
+      subject: `Order ${args.orderNumber} — ${label}`,
+      html,
+      template: "ownerOrderComplete",
+      orderId: args.orderId,
+      orderNumber: args.orderNumber,
+    });
+
+    if (args.phone) {
+      await ctx.scheduler.runAfter(0, internal.notifications.sendSms, {
+        to: args.phone,
+        body: `TheTipsyCake: Order ${args.orderNumber} — ${label}. View: ${siteUrl}/admin/orders`,
+        template: "ownerOrderComplete",
+        orderId: args.orderId,
+        orderNumber: args.orderNumber,
+      });
+    }
+  },
+});
+
+/** Sent to store owner when an order has had no status change for 1hr or 2hr. */
+export const sendOwnerOrderReminder = internalAction({
+  args: {
+    email: v.string(),
+    phone: v.optional(v.string()),
+    orderNumber: v.string(),
+    orderId: v.optional(v.id("orders")),
+    status: v.string(),
+    hoursStale: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://order.tipsycake.com";
+    const statusLabel = args.status.replace(/_/g, " ");
+
+    const html = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Order Reminder</h2>
+        <p>Order <strong>${args.orderNumber}</strong> has had no status update for ${args.hoursStale} hour(s).</p>
+        <p>Current status: <strong>${statusLabel}</strong></p>
+        <p style="margin-top: 24px;"><a href="${siteUrl}/admin/orders" style="color: #e11d48; font-weight: bold;">Update status in Admin</a></p>
+      </div>
+    `.trim();
+
+    await sendEmailAndLog(ctx, {
+      to: args.email,
+      subject: `Reminder: Order ${args.orderNumber} — no update in ${args.hoursStale}hr`,
+      html,
+      template: "ownerOrderReminder",
+      orderId: args.orderId,
+      orderNumber: args.orderNumber,
+    });
+
+    if (args.phone) {
+      await ctx.scheduler.runAfter(0, internal.notifications.sendSms, {
+        to: args.phone,
+        body: `TheTipsyCake: Order ${args.orderNumber} — no status update in ${args.hoursStale}hr. Update: ${siteUrl}/admin/orders`,
+        template: "ownerOrderReminder",
+        orderId: args.orderId,
+        orderNumber: args.orderNumber,
+      });
+    }
   },
 });
 
@@ -254,6 +412,7 @@ export const sendOrderConfirmationToOwner = internalAction({
   args: {
     email: v.string(),
     orderNumber: v.string(),
+    orderId: v.optional(v.id("orders")),
     fulfillmentMode: v.string(),
     totalCents: v.number(),
     scheduledSlotKey: v.optional(v.string()),
@@ -263,12 +422,14 @@ export const sendOrderConfirmationToOwner = internalAction({
     htmlOverride: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const orderContext = { orderId: args.orderId, orderNumber: args.orderNumber };
     if (args.subjectOverride && args.htmlOverride) {
       return await sendEmailAndLog(ctx, {
         to: args.email,
         subject: args.subjectOverride,
         html: args.htmlOverride,
         template: "ownerNotification",
+        ...orderContext,
       });
     }
 
@@ -306,25 +467,35 @@ export const sendOrderConfirmationToOwner = internalAction({
   },
 });
 
+/** Short, friendly SMS messages for each status (under 160 chars). */
+const STATUS_SMS_MESSAGES: Record<string, string> = {
+  paid_confirmed: "Order #{{orderNumber}} confirmed! We're getting started. 🎂",
+  order_accepted: "Order #{{orderNumber}} accepted—we're getting ready. 🎂",
+  in_production: "Your cake #{{orderNumber}} is in the kitchen. Prepping it now! 🎂",
+  ready_for_pickup: "Cake #{{orderNumber}} is ready for pickup! 🎂",
+  ready_for_delivery: "Cake #{{orderNumber}} is boxed. Assigning driver now.",
+  out_for_delivery: "Cake #{{orderNumber}} is on its way! 🚗🎂",
+  delivered: "Your cake #{{orderNumber}} was delivered. Enjoy! 🎂",
+  shipped: "Cake #{{orderNumber}} shipped! Track your order: {{statusLink}} 🎂",
+  completed: "Thanks for picking up #{{orderNumber}}. Hope you love it! 🎂",
+  canceled: "Order #{{orderNumber}} was cancelled. If this is in error, please contact us.",
+};
+
 export const sendOrderStatusUpdate = internalAction({
   args: {
-    email: v.string(),
+    email: v.optional(v.string()),
+    phone: v.optional(v.string()),
     orderNumber: v.string(),
+    orderId: v.optional(v.id("orders")),
     status: v.string(),
     carrier: v.optional(v.string()),
     trackingNumber: v.optional(v.string()),
+    statusLink: v.optional(v.string()),
     subjectOverride: v.optional(v.string()),
     htmlOverride: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    if (args.subjectOverride && args.htmlOverride) {
-      return await sendEmailAndLog(ctx, {
-        to: args.email,
-        subject: args.subjectOverride,
-        html: args.htmlOverride,
-        template: "statusUpdate",
-      });
-    }
+    const orderContext = { orderId: args.orderId, orderNumber: args.orderNumber };
     const statusLabels: Record<string, string> = {
       in_production: "Being Prepared",
       ready_for_pickup: "Ready for Pickup",
@@ -333,20 +504,31 @@ export const sendOrderStatusUpdate = internalAction({
       shipped: "Shipped",
       completed: "Completed",
       canceled: "Canceled",
+      paid_confirmed: "Order Received",
+      order_accepted: "Order Accepted",
+      ready_for_delivery: "Ready for Delivery",
     };
-
     const label = statusLabels[args.status] ?? args.status;
 
-    const trackingUrl =
-      args.carrier && args.trackingNumber
-        ? buildCarrierTrackingUrl(args.carrier, args.trackingNumber)
-        : null;
-    const trackingHtml =
-      args.carrier && args.trackingNumber
-        ? `<tr><td style="padding: 8px 0; font-weight: bold;">Tracking</td><td>${trackingUrl ? `<a href="${trackingUrl}" style="color: #e11d48;">${args.carrier}: ${args.trackingNumber}</a>` : `${args.carrier}: ${args.trackingNumber}`}</td></tr>`
-        : "";
-
-    const html = `
+    let emailResult: Awaited<ReturnType<typeof sendEmailAndLog>> | undefined;
+    if (args.email) {
+      if (args.subjectOverride && args.htmlOverride) {
+        emailResult = await sendEmailAndLog(ctx, {
+          to: args.email,
+          subject: args.subjectOverride,
+          html: args.htmlOverride,
+          template: "statusUpdate",
+        });
+      } else {
+        const trackingUrl =
+          args.carrier && args.trackingNumber
+            ? buildCarrierTrackingUrl(args.carrier, args.trackingNumber)
+            : null;
+        const trackingHtml =
+          args.carrier && args.trackingNumber
+            ? `<tr><td style="padding: 8px 0; font-weight: bold;">Tracking</td><td>${trackingUrl ? `<a href="${trackingUrl}" style="color: #e11d48;">${args.carrier}: ${args.trackingNumber}</a>` : `${args.carrier}: ${args.trackingNumber}`}</td></tr>`
+            : "";
+        const html = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>Order Update</h2>
         <p>Your order <strong>${args.orderNumber}</strong> has a new status:</p>
@@ -357,13 +539,34 @@ export const sendOrderStatusUpdate = internalAction({
         <p style="margin-top: 24px; color: #666;">Thank you for ordering with TipsyCake!</p>
       </div>
     `.trim();
+        emailResult = await sendEmailAndLog(ctx, {
+          to: args.email,
+          subject: `TipsyCake Order ${args.orderNumber} — ${label}`,
+          html,
+          template: "statusUpdate",
+          ...orderContext,
+        });
+      }
+    }
 
-    return await sendEmailAndLog(ctx, {
-      to: args.email,
-      subject: `TipsyCake Order ${args.orderNumber} — ${label}`,
-      html,
-      template: "statusUpdate",
-    });
+    if (args.phone) {
+      const smsTemplate =
+        STATUS_SMS_MESSAGES[args.status] ?? `Order #{{orderNumber}} status: {{status}}`;
+      const statusLinkReplacement = args.statusLink?.trim() || "Check your email for tracking.";
+      const smsBody = smsTemplate
+        .replace(/\{\{orderNumber\}\}/g, args.orderNumber)
+        .replace(/\{\{status\}\}/g, label)
+        .replace(/\{\{statusLink\}\}/g, statusLinkReplacement);
+      await ctx.runAction(internal.notifications.sendSms, {
+        to: args.phone,
+        body: smsBody.trim(),
+        template: "statusUpdate",
+        orderId: args.orderId,
+        orderNumber: args.orderNumber,
+      });
+    }
+
+    return emailResult;
   },
 });
 

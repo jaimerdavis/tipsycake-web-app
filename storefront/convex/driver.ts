@@ -117,19 +117,23 @@ export const claimOrder = mutation({
       createdAt: now,
     });
 
-    if (order.contactEmail) {
+    if (order.contactEmail || order.contactPhone) {
       const settingsRows = await ctx.db.query("siteSettings").collect();
-      const storeName =
-        Object.fromEntries(settingsRows.map((r) => [r.key, r.value])).storeName ?? "TheTipsyCake";
+      const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+      const storeName = settings.storeName ?? "TheTipsyCake";
+      const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
       const rendered = await renderStatusUpdate(ctx, {
         storeName,
         orderNumber: order.orderNumber,
         status: "out_for_delivery",
       });
       await ctx.scheduler.runAfter(0, internal.notifications.sendOrderStatusUpdate, {
-        email: order.contactEmail,
+        email: order.contactEmail?.trim() || undefined,
+        phone: order.contactPhone?.trim() || undefined,
         orderNumber: order.orderNumber,
+        orderId: order._id,
         status: "out_for_delivery",
+        statusLink: `${siteUrl}/orders/${order.guestToken}`,
         subjectOverride: rendered.subject,
         htmlOverride: rendered.html,
       });
@@ -209,23 +213,42 @@ export const updateStatus = mutation({
       await ctx.db.patch(assignment.orderId, {
         status: "delivered",
         updatedAt: now,
+        lastReminderLevel: undefined,
       });
       const order = await ctx.db.get(assignment.orderId);
-      if (order?.contactEmail) {
+      if (order) {
         const settingsRows = await ctx.db.query("siteSettings").collect();
-        const storeName = Object.fromEntries(settingsRows.map((r) => [r.key, r.value])).storeName ?? "TheTipsyCake";
-        const rendered = await renderStatusUpdate(ctx, {
-          storeName,
-          orderNumber: order.orderNumber,
-          status: "delivered",
-        });
-        await ctx.scheduler.runAfter(0, internal.notifications.sendOrderStatusUpdate, {
-          email: order.contactEmail,
-          orderNumber: order.orderNumber,
-          status: "delivered",
-          subjectOverride: rendered.subject,
-          htmlOverride: rendered.html,
-        });
+        const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+        if (order.contactEmail || order.contactPhone) {
+          const storeName = settings.storeName ?? "TheTipsyCake";
+          const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
+          const rendered = await renderStatusUpdate(ctx, {
+            storeName,
+            orderNumber: order.orderNumber,
+            status: "delivered",
+          });
+          await ctx.scheduler.runAfter(0, internal.notifications.sendOrderStatusUpdate, {
+            email: order.contactEmail?.trim() || undefined,
+            phone: order.contactPhone?.trim() || undefined,
+            orderNumber: order.orderNumber,
+            orderId: order._id,
+            status: "delivered",
+            statusLink: `${siteUrl}/orders/${order.guestToken}`,
+            subjectOverride: rendered.subject,
+            htmlOverride: rendered.html,
+          });
+        }
+        const storeEmail = settings.storeEmail?.trim();
+        const notifyOwner = settings.notifyOwnerOnOrder !== "false";
+        if (storeEmail && notifyOwner) {
+          await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderComplete, {
+            email: storeEmail,
+            phone: settings.storePhone?.trim() || undefined,
+            orderNumber: order.orderNumber,
+            orderId: order._id,
+            status: "delivered",
+          });
+        }
       }
     }
     return args.assignmentId;

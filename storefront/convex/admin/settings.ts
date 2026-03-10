@@ -79,6 +79,7 @@ const PUBLIC_SETTING_KEYS = [
   "contentHomeFeature3Desc",
   "contentMenuTitle",
   "contentMenuSubtitle",
+  "contentMenuTextUs",
 ] as const;
 
 export const getAll = query({
@@ -176,6 +177,21 @@ export const sendTestEmail = mutation({
       template: `test_${args.templateType}`,
     });
     return { ok: true, message: `Test email sent to ${args.toEmail}` };
+  },
+});
+
+export const sendTestSms = mutation({
+  args: {
+    toPhone: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await requireRole(ctx, "admin");
+    await ctx.scheduler.runAfter(0, internal.notifications.sendSms, {
+      to: args.toPhone.trim(),
+      body: "TheTipsyCake test SMS. If you got this, Twilio is configured correctly.",
+      template: "test_sms",
+    });
+    return { ok: true, message: `Test SMS scheduled to ${args.toPhone}. Check SMS logs for delivery.` };
   },
 });
 

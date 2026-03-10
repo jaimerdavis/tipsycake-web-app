@@ -18,7 +18,7 @@ import {
 } from "./lib/loyaltyConstants";
 
 function randomOrderNumber() {
-  return `TC-${Math.floor(100000 + Math.random() * 900000)}`;
+  return (Math.floor(Math.random() * 99999) + 1).toString().padStart(5, "0");
 }
 
 function randomGuestToken() {
@@ -122,15 +122,28 @@ async function finalizeFromPaymentEvent(
         throw new Error("Coupon usage limit reached");
       }
 
-      if (coupon.maxRedemptionsPerCustomer !== undefined && userId) {
-        const userRedemptions = await ctx.db
-          .query("couponRedemptions")
-          .withIndex("by_user_coupon", (q) =>
-            q.eq("userId", userId as never).eq("couponId", coupon._id)
-          )
-          .collect();
-        if (userRedemptions.length >= coupon.maxRedemptionsPerCustomer) {
-          throw new Error("Per-customer coupon limit reached");
+      if (coupon.maxRedemptionsPerCustomer !== undefined) {
+        if (userId) {
+          const userRedemptions = await ctx.db
+            .query("couponRedemptions")
+            .withIndex("by_user_coupon", (q) =>
+              q.eq("userId", userId as never).eq("couponId", coupon._id)
+            )
+            .collect();
+          if (userRedemptions.length >= coupon.maxRedemptionsPerCustomer) {
+            throw new Error("Per-customer coupon limit reached");
+          }
+        } else if (cart.contactEmail?.trim()) {
+          const guestEmail = cart.contactEmail.trim().toLowerCase();
+          const guestRedemptions = await ctx.db
+            .query("couponRedemptions")
+            .withIndex("by_contactEmail_coupon", (q) =>
+              q.eq("contactEmail", guestEmail).eq("couponId", coupon._id)
+            )
+            .collect();
+          if (guestRedemptions.length >= coupon.maxRedemptionsPerCustomer) {
+            throw new Error("Per-customer coupon limit reached");
+          }
         }
       }
 
@@ -278,7 +291,7 @@ async function finalizeFromPaymentEvent(
       code: cart.appliedCouponCode ?? "",
       orderId,
       userId: userId ? (userId as never) : undefined,
-      contactEmail: cart.contactEmail,
+      contactEmail: cart.contactEmail?.trim().toLowerCase() ?? undefined,
       createdAt: now,
     });
   }
@@ -346,19 +359,33 @@ async function finalizeFromPaymentEvent(
   const storeEmail = settings.storeEmail?.trim();
   const notifyOwner = settings.notifyOwnerOnOrder !== "false";
 
-  if (finalOrder?.contactEmail) {
+  const orderItems = await ctx.db
+    .query("orderItems")
+    .withIndex("by_order", (q) => q.eq("orderId", orderId))
+    .collect();
+
+  // Use contactEmail, or fallback to linked user's email when logged in
+  let customerEmail = finalOrder?.contactEmail?.trim();
+  if (!customerEmail && finalOrder?.userId) {
+    const user = await ctx.db.get(finalOrder.userId as Id<"users">);
+    customerEmail = user?.email?.trim();
+  }
+
+  if (customerEmail) {
     const rendered = await renderOrderConfirmation(ctx, {
       storeName,
       siteUrl,
-      orderNumber: finalOrder.orderNumber,
-      fulfillmentMode: finalOrder.fulfillmentMode,
-      totalCents: finalOrder.pricingSnapshot.totalCents,
-      scheduledSlotKey: finalOrder.scheduledSlotKey,
-      guestToken: finalOrder.guestToken,
+      orderNumber: finalOrder!.orderNumber,
+      fulfillmentMode: finalOrder!.fulfillmentMode,
+      totalCents: finalOrder!.pricingSnapshot.totalCents,
+      scheduledSlotKey: finalOrder!.scheduledSlotKey,
+      guestToken: finalOrder!.guestToken,
+      items: orderItems,
     });
     await ctx.scheduler.runAfter(0, internal.notifications.sendOrderConfirmation, {
-      email: finalOrder.contactEmail,
+      email: customerEmail,
       orderNumber: finalOrder.orderNumber,
+      orderId: finalOrder._id,
       fulfillmentMode: finalOrder.fulfillmentMode,
       totalCents: finalOrder.pricingSnapshot.totalCents,
       scheduledSlotKey: finalOrder.scheduledSlotKey,
@@ -378,10 +405,15 @@ async function finalizeFromPaymentEvent(
       scheduledSlotKey: finalOrder!.scheduledSlotKey,
       contactEmail: finalOrder!.contactEmail,
       contactPhone: finalOrder!.contactPhone,
+      items: orderItems,
+      pricingSnapshot: finalOrder!.pricingSnapshot,
+      appliedCouponCode: finalOrder!.appliedCouponCode,
+      loyaltyPointsRedeemed: finalOrder!.loyaltyPointsRedeemed,
     });
     await ctx.scheduler.runAfter(0, internal.notifications.sendOrderConfirmationToOwner, {
       email: storeEmail,
       orderNumber: finalOrder!.orderNumber,
+      orderId: finalOrder!._id,
       fulfillmentMode: finalOrder!.fulfillmentMode,
       totalCents: finalOrder!.pricingSnapshot.totalCents,
       scheduledSlotKey: finalOrder!.scheduledSlotKey,
@@ -409,8 +441,8 @@ export const completeFreeOrder = mutation({
     if (!cart) throw new Error("Cart not found");
     if (cart.status !== "active") throw new Error("Cart is not active");
 
-    if (!cart.contactEmail && !cart.contactPhone) {
-      throw new Error("Contact info required");
+    if (!cart.contactEmail || !cart.contactPhone) {
+      throw new Error("Both email and phone are required");
     }
 
     const now = Date.now();
@@ -470,15 +502,28 @@ export const completeFreeOrder = mutation({
         ) {
           throw new Error("Coupon usage limit reached");
         }
-        if (coupon.maxRedemptionsPerCustomer !== undefined && userId) {
-          const userRedemptions = await ctx.db
-            .query("couponRedemptions")
-            .withIndex("by_user_coupon", (q) =>
-              q.eq("userId", userId as never).eq("couponId", coupon._id)
-            )
-            .collect();
-          if (userRedemptions.length >= coupon.maxRedemptionsPerCustomer) {
-            throw new Error("Per-customer coupon limit reached");
+        if (coupon.maxRedemptionsPerCustomer !== undefined) {
+          if (userId) {
+            const userRedemptions = await ctx.db
+              .query("couponRedemptions")
+              .withIndex("by_user_coupon", (q) =>
+                q.eq("userId", userId as never).eq("couponId", coupon._id)
+              )
+              .collect();
+            if (userRedemptions.length >= coupon.maxRedemptionsPerCustomer) {
+              throw new Error("Per-customer coupon limit reached");
+            }
+          } else if (cart.contactEmail?.trim()) {
+            const guestEmail = cart.contactEmail.trim().toLowerCase();
+            const guestRedemptions = await ctx.db
+              .query("couponRedemptions")
+              .withIndex("by_contactEmail_coupon", (q) =>
+                q.eq("contactEmail", guestEmail).eq("couponId", coupon._id)
+              )
+              .collect();
+            if (guestRedemptions.length >= coupon.maxRedemptionsPerCustomer) {
+              throw new Error("Per-customer coupon limit reached");
+            }
           }
         }
         couponDiscountCents = computeCouponDiscount({
@@ -611,7 +656,7 @@ export const completeFreeOrder = mutation({
         code: cart.appliedCouponCode ?? "",
         orderId,
         userId: userId ? (userId as never) : undefined,
-        contactEmail: cart.contactEmail,
+        contactEmail: cart.contactEmail?.trim().toLowerCase() ?? undefined,
         createdAt: now,
       });
     }
@@ -663,7 +708,19 @@ export const completeFreeOrder = mutation({
     const storeEmail = settings.storeEmail?.trim();
     const notifyOwner = settings.notifyOwnerOnOrder !== "false";
 
-    if (finalOrder?.contactEmail) {
+    const orderItemsForEmail = await ctx.db
+      .query("orderItems")
+      .withIndex("by_order", (q) => q.eq("orderId", orderId))
+      .collect();
+
+    // Use contactEmail, or fallback to linked user's email when logged in
+    let customerEmailForFree = finalOrder?.contactEmail?.trim();
+    if (!customerEmailForFree && finalOrder?.userId) {
+      const user = await ctx.db.get(finalOrder.userId as Id<"users">);
+      customerEmailForFree = user?.email?.trim();
+    }
+
+    if (customerEmailForFree) {
       const rendered = await renderOrderConfirmation(ctx, {
         storeName,
         siteUrl,
@@ -672,10 +729,12 @@ export const completeFreeOrder = mutation({
         totalCents: finalOrder.pricingSnapshot.totalCents,
         scheduledSlotKey: finalOrder.scheduledSlotKey,
         guestToken: finalOrder.guestToken,
+        items: orderItemsForEmail,
       });
       await ctx.scheduler.runAfter(0, internal.notifications.sendOrderConfirmation, {
-        email: finalOrder.contactEmail,
+        email: customerEmailForFree,
         orderNumber: finalOrder.orderNumber,
+        orderId: finalOrder._id,
         fulfillmentMode: finalOrder.fulfillmentMode,
         totalCents: finalOrder.pricingSnapshot.totalCents,
         scheduledSlotKey: finalOrder.scheduledSlotKey,
@@ -695,10 +754,15 @@ export const completeFreeOrder = mutation({
         scheduledSlotKey: finalOrder.scheduledSlotKey,
         contactEmail: finalOrder.contactEmail,
         contactPhone: finalOrder.contactPhone,
+        items: orderItemsForEmail,
+        pricingSnapshot: finalOrder.pricingSnapshot,
+        appliedCouponCode: finalOrder.appliedCouponCode,
+        loyaltyPointsRedeemed: finalOrder.loyaltyPointsRedeemed,
       });
       await ctx.scheduler.runAfter(0, internal.notifications.sendOrderConfirmationToOwner, {
         email: storeEmail,
         orderNumber: finalOrder.orderNumber,
+        orderId: finalOrder._id,
         fulfillmentMode: finalOrder.fulfillmentMode,
         totalCents: finalOrder.pricingSnapshot.totalCents,
         scheduledSlotKey: finalOrder.scheduledSlotKey,
@@ -722,11 +786,24 @@ export const getByCartId = query({
       .withIndex("by_cartId", (q) => q.eq("cartId", args.cartId))
       .unique();
     if (!order) return null;
+
+    const items = await ctx.db
+      .query("orderItems")
+      .withIndex("by_order", (q) => q.eq("orderId", order._id))
+      .collect();
+
     return {
       orderNumber: order.orderNumber,
       guestToken: order.guestToken,
       fulfillmentMode: order.fulfillmentMode,
       totalCents: order.pricingSnapshot.totalCents,
+      contactEmail: order.contactEmail,
+      items: items.map((item) => ({
+        _id: item._id,
+        productName: (item.productSnapshot as { name?: string })?.name ?? "Item",
+        qty: item.qty,
+        unitPriceCents: item.unitPriceCents,
+      })),
     };
   },
 });

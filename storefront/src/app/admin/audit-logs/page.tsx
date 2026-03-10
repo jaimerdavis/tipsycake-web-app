@@ -1,8 +1,9 @@
 "use client";
 
-import { useQuery } from "convex/react";
+import { usePaginatedQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -30,10 +31,11 @@ const ENTITY_TYPES = [
 
 export default function AuditLogsPage() {
   const [entityFilter, setEntityFilter] = useState("all");
-  const logs = useQuery(api.admin.auditLogs.list, {
-    entityType: entityFilter === "all" ? undefined : entityFilter,
-    limit: 200,
-  });
+  const { results: logs = [], status: logsStatus, loadMore: loadMoreLogs } = usePaginatedQuery(
+    api.admin.auditLogs.list,
+    { entityType: entityFilter === "all" ? undefined : entityFilter },
+    { initialNumItems: 50 }
+  );
 
   return (
     <div className="flex flex-col gap-6 px-4 py-6 sm:px-6">
@@ -66,7 +68,7 @@ export default function AuditLogsPage() {
       )}
 
       <div className="flex flex-col gap-3">
-        {(logs ?? []).map((log) => (
+        {logs.map((log) => (
           <Card key={log._id}>
             <CardHeader className="py-3">
               <div className="flex items-center gap-2">
@@ -92,6 +94,11 @@ export default function AuditLogsPage() {
             )}
           </Card>
         ))}
+        {logsStatus === "CanLoadMore" && (
+          <Button variant="outline" onClick={() => loadMoreLogs(50)}>
+            Load more
+          </Button>
+        )}
       </div>
     </div>
   );

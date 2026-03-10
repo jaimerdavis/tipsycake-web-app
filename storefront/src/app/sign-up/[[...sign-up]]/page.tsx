@@ -7,7 +7,7 @@ export default function SignUpPage() {
         appearance={{
           variables: { colorPrimary: "#e92486" },
         }}
-        fallbackRedirectUrl="/account"
+        fallbackRedirectUrl="/auth/redirect"
         signInUrl="/sign-in"
       />
     </main>
