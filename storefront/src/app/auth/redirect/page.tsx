@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "convex/react";
 
-import { api } from "../../../convex/_generated/api";
+import { api } from "../../../../convex/_generated/api";
 
 const ADMIN_ROLES = ["admin", "manager", "kitchen", "dispatcher"] as const;
 
