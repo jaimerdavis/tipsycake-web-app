@@ -9,15 +9,6 @@ import { requireRole } from "../lib/auth";
 const BATCH_SIZE = 50;
 const BATCH_DELAY_MS = 500;
 
-async function requireBlastRole(ctx: { runQuery: (fn: unknown, args: object) => Promise<unknown> }) {
-  const me = await ctx.runQuery(api.users.meOrNull, {});
-  if (!me || typeof me !== "object" || !("role" in me) || !("_id" in me))
-    throw new Error("Not authenticated");
-  const role = (me as { role: string }).role;
-  if (role !== "admin" && role !== "manager") throw new Error("Admin or manager role required");
-  return me as { _id: Id<"users">; role: string };
-}
-
 /** Create a new blast, queue it for sending, and return its id. NTF-004 */
 export const createBlast = action({
   args: {
@@ -27,9 +18,13 @@ export const createBlast = action({
     /** When set, send only to this email (test mode). Skips customer recipient logic. */
     testEmail: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    const user = await requireBlastRole(ctx);
-    const actorId = user._id;
+  handler: async (ctx, args): Promise<Id<"emailBlasts">> => {
+    const me = await ctx.runQuery(api.users.meOrNull, {});
+    if (!me || typeof me !== "object" || !("role" in me) || !("_id" in me))
+      throw new Error("Not authenticated");
+    const role = (me as { role: string }).role;
+    if (role !== "admin" && role !== "manager") throw new Error("Admin or manager role required");
+    const actorId = (me as { _id: Id<"users"> })._id;
 
     let total: number;
     const testEmails: string[] | undefined = args.testEmail?.trim()
@@ -50,14 +45,14 @@ export const createBlast = action({
       }
     }
 
-    const blastId = await ctx.runMutation(internal.admin.blast.insertBlast, {
+    const blastId = (await ctx.runMutation(internal.admin.blast.insertBlast, {
       subject: args.subject.trim(),
       bodyHtml: args.bodyHtml.trim(),
       lastOrderWithinDays: args.lastOrderWithinDays,
       isTest: !!testEmails,
       totalRecipients: total,
       actorId: String(actorId),
-    });
+    })) as Id<"emailBlasts">;
 
     await ctx.runMutation(internal.admin.blast.auditBlastCreated, {
       blastId,
@@ -182,12 +177,14 @@ export const processBlastBatch = internalAction({
       emails = args.testEmails.slice(args.skip, args.skip + BATCH_SIZE);
       total = args.testEmails.length;
     } else {
-      const ref = (internal as Record<string, Record<string, unknown>>)["admin/customers"].listEmailsForBlastInternal;
-      const result = await ctx.runQuery(ref, {
-        skip: args.skip,
-        limit: BATCH_SIZE,
-        lastOrderWithinDays: args.lastOrderWithinDays,
-      });
+      const result = await ctx.runQuery(
+        internal.admin.customers.listEmailsForBlastInternal,
+        {
+          skip: args.skip,
+          limit: BATCH_SIZE,
+          lastOrderWithinDays: args.lastOrderWithinDays,
+        }
+      );
       emails = result.emails;
       total = result.total;
     }

@@ -183,7 +183,7 @@ export const seedImportProducts = mutation({
         slug: c.slug,
         description: "",
         images: [],
-        status: c.status ?? "active",
+        status: ("status" in c ? (c as { status: "active" | "hidden" }).status : "active") as "active" | "hidden",
         categories: ["cakes"],
         tags: ["rum cakes", "tipsy cake"],
         basePriceCents: c.price * 100,

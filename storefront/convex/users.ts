@@ -38,6 +38,27 @@ export const storeUser = mutation({
       return existing._id;
     }
 
+    // Link by email: when switching Clerk instances (dev→prod) or re-auth, claim existing
+    // user to preserve order history, roles, loyalty, etc.
+    const rawEmail = identity.email?.trim();
+    if (rawEmail) {
+      const normalized = rawEmail.toLowerCase();
+      const byEmail = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", normalized))
+        .unique();
+      if (byEmail) {
+        await ctx.db.patch(byEmail._id, {
+          tokenIdentifier: identity.tokenIdentifier,
+          email: normalized,
+          name: identity.name ?? byEmail.name,
+          image: identity.pictureUrl ?? byEmail.image,
+          updatedAt: now,
+        });
+        return byEmail._id;
+      }
+    }
+
     const userId = await ctx.db.insert("users", {
       tokenIdentifier: identity.tokenIdentifier,
       email: identity.email ?? "",

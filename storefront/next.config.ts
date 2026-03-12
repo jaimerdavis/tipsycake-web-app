@@ -1,6 +1,13 @@
 import type { NextConfig } from "next";
 import path from "path";
 
+// Fail production build if Clerk dev key is used (catches Vercel env misconfig)
+if (process.env.VERCEL_ENV === "production" && process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.startsWith("pk_test_")) {
+  throw new Error(
+    "Production deploy cannot use Clerk dev key (pk_test_). Set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY to pk_live_... in Vercel → Settings → Environment Variables → Production, then redeploy."
+  );
+}
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- PWA uses CommonJS
 const withPWAInit = require("@ducanh2912/next-pwa").default;
 const withPWA = withPWAInit({ dest: "public" });

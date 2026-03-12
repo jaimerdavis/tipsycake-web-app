@@ -789,7 +789,11 @@ export const backfillContactNamesFromCsv = mutation({
     }
 
     const orders = await ctx.db.query("orders").collect();
-    const dbEmails = new Set(orders.map((o) => o.contactEmail?.trim()?.toLowerCase()).filter(Boolean));
+    const dbEmails = new Set(
+      orders
+        .map((o) => o.contactEmail?.trim()?.toLowerCase())
+        .filter((e): e is string => typeof e === "string")
+    );
     const csvEmails = new Set(emailToName.keys());
     const now = Date.now();
     let updated = 0;
@@ -809,7 +813,7 @@ export const backfillContactNamesFromCsv = mutation({
         ? ` No overlap: CSV has ${csvEmails.size} emails, DB has ${dbEmails.size}. Sample CSV: ${[...csvEmails].slice(0, 3).join(", ")}. Sample DB: ${[...dbEmails].slice(0, 3).join(", ")}.`
         : "";
 
-    return { ok: true, updated, totalInCsv: emailToName.size, hint: hint || undefined };
+    return { ok: true, updated, totalInCsv: emailToName.size, ...(hint ? { hint } : {}) };
   },
 });
 

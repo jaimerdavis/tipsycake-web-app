@@ -387,17 +387,20 @@ export function ProductImageGallery({
           </div>
         </div>
 
-        {/* Thumbnail strip */}
+        {/* Thumbnail strip: 1st tap shows in main view, 2nd tap (when already active) opens lightbox */}
         <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {displayImages.map((img, i) => (
             <button
               key={i}
               type="button"
               onClick={() => {
-                scrollToIndex(i);
-                openLightbox(i);
+                if (activeIndex === i) {
+                  openLightbox(i);
+                } else {
+                  scrollToIndex(i);
+                }
               }}
-              aria-label={`View photo ${i + 1}`}
+              aria-label={activeIndex === i ? `View photo ${i + 1} full size` : `Show photo ${i + 1}`}
               className={`h-14 w-14 flex-shrink-0 overflow-hidden rounded-xl border-2 bg-amber-50/40 transition-all ${
                 activeIndex === i
                   ? "border-rose-400 opacity-100 ring-1 ring-rose-300"

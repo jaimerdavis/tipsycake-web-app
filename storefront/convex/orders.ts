@@ -352,6 +352,7 @@ async function finalizeFromPaymentEvent(
   });
 
   const finalOrder = await ctx.db.get(orderId);
+  if (!finalOrder) throw new Error("Order not found");
   const settingsRows = await ctx.db.query("siteSettings").collect();
   const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
   const storeName = settings.storeName ?? "TheTipsyCake";
@@ -365,8 +366,8 @@ async function finalizeFromPaymentEvent(
     .collect();
 
   // Use contactEmail, or fallback to linked user's email when logged in
-  let customerEmail = finalOrder?.contactEmail?.trim();
-  if (!customerEmail && finalOrder?.userId) {
+  let customerEmail = finalOrder.contactEmail?.trim();
+  if (!customerEmail && finalOrder.userId) {
     const user = await ctx.db.get(finalOrder.userId as Id<"users">);
     customerEmail = user?.email?.trim();
   }
@@ -375,11 +376,11 @@ async function finalizeFromPaymentEvent(
     const rendered = await renderOrderConfirmation(ctx, {
       storeName,
       siteUrl,
-      orderNumber: finalOrder!.orderNumber,
-      fulfillmentMode: finalOrder!.fulfillmentMode,
-      totalCents: finalOrder!.pricingSnapshot.totalCents,
-      scheduledSlotKey: finalOrder!.scheduledSlotKey,
-      guestToken: finalOrder!.guestToken,
+      orderNumber: finalOrder.orderNumber,
+      fulfillmentMode: finalOrder.fulfillmentMode,
+      totalCents: finalOrder.pricingSnapshot.totalCents,
+      scheduledSlotKey: finalOrder.scheduledSlotKey,
+      guestToken: finalOrder.guestToken,
       items: orderItems,
     });
     await ctx.scheduler.runAfter(0, internal.notifications.sendOrderConfirmation, {
@@ -399,21 +400,21 @@ async function finalizeFromPaymentEvent(
     const rendered = await renderOwnerNotification(ctx, {
       storeName,
       siteUrl,
-      orderNumber: finalOrder!.orderNumber,
-      fulfillmentMode: finalOrder!.fulfillmentMode,
-      totalCents: finalOrder!.pricingSnapshot.totalCents,
-      scheduledSlotKey: finalOrder!.scheduledSlotKey,
-      contactEmail: finalOrder!.contactEmail,
-      contactPhone: finalOrder!.contactPhone,
+      orderNumber: finalOrder.orderNumber,
+      fulfillmentMode: finalOrder.fulfillmentMode,
+      totalCents: finalOrder.pricingSnapshot.totalCents,
+      scheduledSlotKey: finalOrder.scheduledSlotKey,
+      contactEmail: finalOrder.contactEmail,
+      contactPhone: finalOrder.contactPhone,
       items: orderItems,
-      pricingSnapshot: finalOrder!.pricingSnapshot,
-      appliedCouponCode: finalOrder!.appliedCouponCode,
-      loyaltyPointsRedeemed: finalOrder!.loyaltyPointsRedeemed,
+      pricingSnapshot: finalOrder.pricingSnapshot,
+      appliedCouponCode: finalOrder.appliedCouponCode,
+      loyaltyPointsRedeemed: finalOrder.loyaltyPointsRedeemed,
     });
     await ctx.scheduler.runAfter(0, internal.notifications.sendOrderConfirmationToOwner, {
       email: storeEmail,
-      orderNumber: finalOrder!.orderNumber,
-      orderId: finalOrder!._id,
+      orderNumber: finalOrder.orderNumber,
+      orderId: finalOrder._id,
       fulfillmentMode: finalOrder!.fulfillmentMode,
       totalCents: finalOrder!.pricingSnapshot.totalCents,
       scheduledSlotKey: finalOrder!.scheduledSlotKey,
@@ -701,6 +702,7 @@ export const completeFreeOrder = mutation({
     }
 
     const finalOrder = await ctx.db.get(orderId);
+    if (!finalOrder) throw new Error("Order not found");
     const settingsRows = await ctx.db.query("siteSettings").collect();
     const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
     const storeName = settings.storeName ?? "TheTipsyCake";
@@ -714,8 +716,8 @@ export const completeFreeOrder = mutation({
       .collect();
 
     // Use contactEmail, or fallback to linked user's email when logged in
-    let customerEmailForFree = finalOrder?.contactEmail?.trim();
-    if (!customerEmailForFree && finalOrder?.userId) {
+    let customerEmailForFree = finalOrder.contactEmail?.trim();
+    if (!customerEmailForFree && finalOrder.userId) {
       const user = await ctx.db.get(finalOrder.userId as Id<"users">);
       customerEmailForFree = user?.email?.trim();
     }
@@ -744,7 +746,7 @@ export const completeFreeOrder = mutation({
       });
     }
 
-    if (storeEmail && notifyOwner && finalOrder) {
+    if (storeEmail && notifyOwner) {
       const rendered = await renderOwnerNotification(ctx, {
         storeName,
         siteUrl,
