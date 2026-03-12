@@ -89,6 +89,7 @@ export default function RootLayout({
             })(window, document, "clarity", "script", "${process.env.NEXT_PUBLIC_CLARITY_PROJECT_ID}");`}
           </Script>
         )}
+        {/* Facebook Pixel: loads when NEXT_PUBLIC_FB_PIXEL_ID is set */}
         {process.env.NEXT_PUBLIC_FB_PIXEL_ID && (
           <Script id="facebook-pixel" strategy="afterInteractive">
             {`!function(f,b,e,v,n,t,s)
