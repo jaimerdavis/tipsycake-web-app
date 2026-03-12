@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { loadStripe } from "@stripe/stripe-js";
+import { getStripePromise } from "@/lib/stripe";
 import {
   Elements,
   PaymentElement,
@@ -98,7 +98,7 @@ export function StripePaymentForm({
   const stripeKey = get("stripePublishableKey");
 
   const stripePromise = useMemo(
-    () => (stripeKey ? loadStripe(stripeKey) : null),
+    () => getStripePromise(stripeKey),
     [stripeKey]
   );
 

@@ -1,4 +1,4 @@
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { getCurrentUser, getCurrentUserOrNull } from "./lib/auth";
@@ -21,11 +21,25 @@ export const storeUser = mutation({
     }
 
     const now = Date.now();
+    const tokenIdentifier = identity.tokenIdentifier;
+
+    const claimAddressesOnSignIn = async (email: string) => {
+      const norm = email?.trim()?.toLowerCase();
+      if (!norm) return;
+      for (const ownerKey of [`email:${norm}`, `import:${norm}`]) {
+        const addrs = await ctx.db
+          .query("addresses")
+          .withIndex("by_owner", (q) => q.eq("ownerId", ownerKey))
+          .collect();
+        for (const a of addrs) {
+          await ctx.db.patch(a._id, { ownerId: tokenIdentifier });
+        }
+      }
+    };
+
     const existing = await ctx.db
       .query("users")
-      .withIndex("by_token", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
-      )
+      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenIdentifier))
       .unique();
 
     if (existing) {
@@ -35,6 +49,12 @@ export const storeUser = mutation({
         image: identity.pictureUrl ?? existing.image,
         updatedAt: now,
       });
+      await claimAddressesOnSignIn(identity.email ?? existing.email ?? "");
+      if (!existing.stripeCustomerId) {
+        await ctx.scheduler.runAfter(0, internal.migrateStripeCustomers.linkStripeCustomerForUserByEmail, {
+          userId: existing._id,
+        });
+      }
       return existing._id;
     }
 
@@ -49,19 +69,25 @@ export const storeUser = mutation({
         .unique();
       if (byEmail) {
         await ctx.db.patch(byEmail._id, {
-          tokenIdentifier: identity.tokenIdentifier,
+          tokenIdentifier,
           email: normalized,
           name: identity.name ?? byEmail.name,
           image: identity.pictureUrl ?? byEmail.image,
           updatedAt: now,
         });
+        await claimAddressesOnSignIn(normalized);
+        if (!byEmail.stripeCustomerId) {
+          await ctx.scheduler.runAfter(0, internal.migrateStripeCustomers.linkStripeCustomerForUserByEmail, {
+            userId: byEmail._id,
+          });
+        }
         return byEmail._id;
       }
     }
 
     const userId = await ctx.db.insert("users", {
-      tokenIdentifier: identity.tokenIdentifier,
-      email: identity.email ?? "",
+      tokenIdentifier,
+      email: (identity.email ?? "").trim().toLowerCase(),
       name: identity.name ?? "Unknown User",
       image: identity.pictureUrl,
       role: "customer",
@@ -69,6 +95,7 @@ export const storeUser = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await claimAddressesOnSignIn(identity.email ?? "");
     await ctx.scheduler.runAfter(0, internal.loyalty.awardSignupBonus, {
       userId,
     });
@@ -190,5 +217,71 @@ export const updateEmailByToken = internalMutation({
     const normalized = args.email.trim().toLowerCase();
     if (!normalized) return;
     await ctx.db.patch(user._id, { email: normalized, updatedAt: Date.now() });
+  },
+});
+
+/** Internal: return email/name for Stripe Customer creation. Called from createPaymentIntent. */
+export const getUserForStripeCustomer = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) return null;
+    return { email: user.email, name: user.name };
+  },
+});
+
+/** Internal: list users without stripeCustomerId for Stripe migration. */
+export const listUsersWithoutStripeCustomerId = internalQuery({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const all = await ctx.db.query("users").collect();
+    return all
+      .filter((u) => !u.stripeCustomerId && u.email?.trim())
+      .slice(0, args.limit ?? 200)
+      .map((u) => ({ userId: u._id, email: u.email!.trim().toLowerCase() }));
+  },
+});
+
+/** Internal: get user by email for Stripe migration. */
+export const getUserByEmailForMigration = internalQuery({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    const normalized = args.email.trim().toLowerCase();
+    if (!normalized) return null;
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", normalized))
+      .unique();
+    if (user) return { userId: user._id };
+    // Fallback: case-insensitive match when stored email has different casing (e.g. from Clerk)
+    const all = await ctx.db.query("users").collect();
+    const match = all.find((u) => u.email?.trim()?.toLowerCase() === normalized);
+    return match ? { userId: match._id } : null;
+  },
+});
+
+/** Internal: get stripeCustomerId for a user. Used by admin payment method actions. */
+export const getStripeCustomerIdForUser = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user?.stripeCustomerId) return null;
+    return { stripeCustomerId: user.stripeCustomerId };
+  },
+});
+
+/** Internal: set Stripe Customer ID for saved payments. Called from createPaymentIntent. */
+export const setStripeCustomerId = internalMutation({
+  args: {
+    userId: v.id("users"),
+    stripeCustomerId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) return;
+    await ctx.db.patch(args.userId, {
+      stripeCustomerId: args.stripeCustomerId,
+      updatedAt: Date.now(),
+    });
   },
 });

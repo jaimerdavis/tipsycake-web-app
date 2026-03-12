@@ -21,7 +21,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-const DELETE_CONFIRMATION_TEXT = "DELETE";
+const DELETE_CONFIRMATION_TEXT = "delete";
 
 export default function AccountPrivacyPage() {
   const { isAuthenticated } = useConvexAuth();

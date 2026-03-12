@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { ArrowDown, ArrowUp, ChevronRight } from "lucide-react";
+import { ArrowDown, ArrowUp, CreditCard, ChevronRight } from "lucide-react";
 
 import { api } from "../../../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,16 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { PaymentMethodManager } from "@/components/PaymentMethodManager";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { CUSTOMER_STATUS_LABELS } from "@/lib/orderStatusConfig";
 
 type SortField = "name" | "email" | "orderCount" | "totalRevenue" | "lastOrderAt";
@@ -35,6 +43,7 @@ export default function AdminCustomersPage() {
   const [sortBy, setSortBy] = useState<SortField>("lastOrderAt");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [expandedEmail, setExpandedEmail] = useState<string | null>(null);
+  const [paymentMethodsEmail, setPaymentMethodsEmail] = useState<string | null>(null);
   const [csvContent, setCsvContent] = useState("");
   const [backfillStatus, setBackfillStatus] = useState<string | null>(null);
   const [addressBackfillStatus, setAddressBackfillStatus] = useState<string | null>(null);
@@ -52,6 +61,17 @@ export default function AdminCustomersPage() {
   const backfillNames = useMutation(api.importHistoricalOrders.backfillContactNamesFromCsv);
   const backfillAddresses = useMutation(api.importHistoricalOrders.backfillAddressesFromCsv);
   const linkGuestOrders = useMutation(api.admin.orders.linkAllGuestOrdersToUsers);
+  const fixCustomerEmail = useMutation(api.admin.customers.fixCustomerEmail);
+
+  const [fixFromEmail, setFixFromEmail] = useState("");
+  const [fixToEmail, setFixToEmail] = useState("");
+  const [fixStatus, setFixStatus] = useState<string | null>(null);
+  const [fixSearch, setFixSearch] = useState("alrick");
+
+  const emailSearchResults = useQuery(
+    api.admin.customers.searchCustomerEmails,
+    fixSearch.trim().length >= 2 ? { search: fixSearch.trim() } : "skip"
+  );
 
   const toggleSort = (field: SortField) => {
     if (sortBy === field) {
@@ -185,9 +205,19 @@ export default function AdminCustomersPage() {
                 </div>
                 <CollapsibleContent>
                   <div className="bg-muted/30 px-4 py-3 pb-4 -mt-2 mb-2">
-                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
-                      Orders
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPaymentMethodsEmail(c.email)}
+                      >
+                        <CreditCard className="mr-1.5 h-4 w-4" />
+                        Payment methods
+                      </Button>
+                      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground ml-2 flex-1">
+                        Orders
+                      </p>
+                    </div>
                     <div className="space-y-2">
                       {expandedEmail === c.email && ordersForExpanded === undefined && (
                         <p className="text-sm text-muted-foreground italic">
@@ -328,6 +358,81 @@ export default function AdminCustomersPage() {
             )}
           </div>
           <div className="space-y-2">
+            <Label>Fix customer email (merge duplicates)</Label>
+            <p className="text-xs text-muted-foreground">
+              Correct a typo across orders, coupon redemptions, and chat. Merges duplicate rows.
+            </p>
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2 items-end">
+                <div className="space-y-1">
+                  <Label htmlFor="fix-search" className="text-xs">Search emails (e.g. alrick)</Label>
+                  <Input
+                    id="fix-search"
+                    type="text"
+                    placeholder="alrick"
+                    value={fixSearch}
+                    onChange={(e) => setFixSearch(e.target.value)}
+                    className="h-8 w-40"
+                  />
+                </div>
+              </div>
+              {emailSearchResults && emailSearchResults.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Found: {emailSearchResults.map((r) => `${r.email} (${r.orderCount})`).join("; ")}
+                  {" "}— Use the typo for From, correct email for To.
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2 items-end">
+              <div className="space-y-1">
+                <Label htmlFor="fix-from" className="text-xs">From (wrong email)</Label>
+                <Input
+                  id="fix-from"
+                  type="email"
+                  placeholder="alrickmurray14@gnail.com"
+                  value={fixFromEmail}
+                  onChange={(e) => setFixFromEmail(e.target.value)}
+                  className="h-8"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="fix-to" className="text-xs">To (correct email)</Label>
+                <Input
+                  id="fix-to"
+                  type="email"
+                  placeholder="alrickmurray14@gmail.com"
+                  value={fixToEmail}
+                  onChange={(e) => setFixToEmail(e.target.value)}
+                  className="h-8"
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!fixFromEmail.trim() || !fixToEmail.trim()}
+                onClick={async () => {
+                  setFixStatus("Running…");
+                  try {
+                    const result = await fixCustomerEmail({
+                      fromEmail: fixFromEmail.trim(),
+                      toEmail: fixToEmail.trim(),
+                    });
+                    setFixStatus(
+                      `Updated ${result.ordersUpdated} order(s), ${result.redemptionsUpdated} redemption(s), ${result.conversationsUpdated} conversation(s).`
+                    );
+                  } catch (e) {
+                    setFixStatus("Error: " + (e instanceof Error ? e.message : String(e)));
+                  }
+                }}
+              >
+                Fix email
+              </Button>
+            </div>
+            {fixStatus && (
+              <p className="text-sm text-muted-foreground">{fixStatus}</p>
+            )}
+          </div>
+          <div className="space-y-2">
             <Label>Link guest orders to accounts</Label>
             <p className="text-xs text-muted-foreground">
               Attach all guest orders (with email) to user accounts with matching email.
@@ -362,6 +467,23 @@ export default function AdminCustomersPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog
+        open={!!paymentMethodsEmail}
+        onOpenChange={(open) => !open && setPaymentMethodsEmail(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Payment methods — {paymentMethodsEmail ?? ""}</DialogTitle>
+          </DialogHeader>
+          {paymentMethodsEmail && (
+            <PaymentMethodManager
+              customerEmail={paymentMethodsEmail}
+              adminView={false}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

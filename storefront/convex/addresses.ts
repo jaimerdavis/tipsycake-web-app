@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import type { QueryCtx, MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { api } from "./_generated/api";
 
 async function resolveOwner(
   ctx: QueryCtx | MutationCtx,
@@ -24,14 +25,39 @@ export const getAddressById = query({
 export const listAddresses = query({
   args: {
     guestSessionId: v.optional(v.string()),
+    contactEmail: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const ownerId = await resolveOwner(ctx, args.guestSessionId);
-    if (!ownerId) return [];
-    return await ctx.db
-      .query("addresses")
-      .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
-      .collect();
+    const seen = new Set<string>();
+    const result: Awaited<ReturnType<typeof ctx.db.get>>[] = [];
+
+    if (ownerId) {
+      const owned = await ctx.db
+        .query("addresses")
+        .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
+        .collect();
+      for (const a of owned) {
+        result.push(a);
+        seen.add(a._id);
+      }
+    }
+
+    if (args.contactEmail?.trim()) {
+      const emailKey = `email:${args.contactEmail.trim().toLowerCase()}`;
+      const byEmail = await ctx.db
+        .query("addresses")
+        .withIndex("by_owner", (q) => q.eq("ownerId", emailKey))
+        .collect();
+      for (const a of byEmail) {
+        if (!seen.has(a._id)) {
+          result.push(a);
+          seen.add(a._id);
+        }
+      }
+    }
+
+    return result;
   },
 });
 
@@ -53,11 +79,13 @@ export const createAddress = mutation({
     const ownerId = await resolveOwner(ctx, args.ownerId ?? undefined) ?? args.ownerId;
     if (!ownerId) throw new Error("Owner required");
     const { ownerId: _omit, ...rest } = args;
-    return await ctx.db.insert("addresses", {
+    const addressId = await ctx.db.insert("addresses", {
       ...rest,
       ownerId,
       createdAt: Date.now(),
     });
+    await ctx.scheduler.runAfter(0, api.maps.computeDistanceAndZone, { addressId });
+    return addressId;
   },
 });
 

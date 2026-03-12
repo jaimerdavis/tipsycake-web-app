@@ -81,6 +81,7 @@ const PUBLIC_SETTING_KEYS = [
   "contentMenuTitle",
   "contentMenuSubtitle",
   "contentMenuTextUs",
+  "chatEnabled",
 ] as const;
 
 export const getAll = query({

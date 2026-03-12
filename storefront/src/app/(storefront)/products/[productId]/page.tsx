@@ -157,7 +157,9 @@ function ProductDetailContent() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [prefilled, setPrefilled] = useState(false);
   const [showShapeModal, setShowShapeModal] = useState(false);
+  const [showExtrasPromptModal, setShowExtrasPromptModal] = useState(false);
   const shapeSectionRef = useRef<HTMLDivElement>(null);
+  const extrasSectionRef = useRef<HTMLDivElement>(null);
 
   type FormData = z.infer<typeof customizationSchema>;
   const form = useForm<FormData>({
@@ -188,15 +190,29 @@ function ProductDetailContent() {
     setPrefilled(true);
   }, [isEditMode, existingItem, prefilled, form]);
 
+  const shapeGroup = useMemo(
+    () => product?.modifierGroups.find((g) => g.name === "Shape"),
+    [product]
+  );
+
   const maxQty = useMemo(() => {
     if (!product) return 10;
     return product.maxQtyPerOrder ?? 10;
   }, [product]);
 
-  const shapeGroup = useMemo(
-    () => product?.modifierGroups.find((g) => g.name === "Shape"),
-    [product]
-  );
+  // Default shape to "Even 20" when not editing and no shape selected yet
+  useEffect(() => {
+    if (isEditMode || !product || prefilled) return;
+    const shape = product.modifierGroups.find((g) => g.name === "Shape");
+    if (!shape) return;
+    const gid = shape._id as string;
+    const current = selectedOptionsByGroup[gid] ?? [];
+    if (current.length > 0) return;
+    const even20Opt = shape.options.find((o) => o.name === "Even 20");
+    if (even20Opt) {
+      setSelectedOptionsByGroup((prev) => ({ ...prev, [gid]: [even20Opt._id as string] }));
+    }
+  }, [isEditMode, product, prefilled, selectedOptionsByGroup]);
 
   const selectedShapeKey = useMemo(() => {
     if (!shapeGroup) return "";
@@ -318,6 +334,28 @@ function ProductDetailContent() {
       return;
     }
 
+    if (!isEditMode && shapeGroup) {
+      const birthdayGroup = product.modifierGroups.find((g) => g.name === "Birthday Extras");
+      const extraTipsyGroup = product.modifierGroups.find((g) => g.name.toLowerCase() === "make it extra tipsy");
+      const birthdaySelected = birthdayGroup && (selectedOptionsByGroup[birthdayGroup._id as string] ?? []).length > 0;
+      const extraTipsySelected = extraTipsyGroup && (selectedOptionsByGroup[extraTipsyGroup._id as string] ?? []).length > 0;
+      const birthdayUnselected = birthdayGroup && !birthdayGroup.required && (selectedOptionsByGroup[birthdayGroup._id as string] ?? []).length === 0;
+      const extraTipsyUnselected = extraTipsyGroup && !extraTipsyGroup.required && (selectedOptionsByGroup[extraTipsyGroup._id as string] ?? []).length === 0;
+      // Only prompt when at least one is optional/unselected AND neither has been selected
+      const hasOptionalExtras =
+        (birthdayUnselected || extraTipsyUnselected) && !birthdaySelected && !extraTipsySelected;
+      if (hasOptionalExtras) {
+        setShowExtrasPromptModal(true);
+        return;
+      }
+    }
+
+    await doActualSubmit(values);
+  }
+
+  async function doActualSubmit(values: z.infer<typeof customizationSchema>) {
+    if (!product) return;
+
     const modifiersPayload = Object.entries(selectedOptionsByGroup).flatMap(
       ([groupId, optionIds]) =>
         optionIds.map((optionId) => ({ groupId: groupId as never, optionId: optionId as never }))
@@ -417,9 +455,27 @@ function ProductDetailContent() {
             &larr; {isEditMode ? "Back to cart" : "Back to menu"}
           </Link>
         </Button>
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-3">
+            <h1 className="font-display text-5xl text-brand-text">{productDisplayName(product.name)}</h1>
+            {isEditMode && <Badge variant="secondary" className="rounded-full">Editing</Badge>}
+          </div>
+          {(() => {
+            const short = (product as { shortDescription?: string }).shortDescription?.trim();
+            const full = product.description;
+            return (
+              <div className="space-y-0.5">
+                {short && (
+                  <p className="text-xs text-muted-foreground">{short}</p>
+                )}
+                <p className={short ? "text-[11px] text-muted-foreground/90 leading-relaxed" : "text-sm text-muted-foreground"}>{full}</p>
+              </div>
+            );
+          })()}
+        </div>
         <div className="space-y-3">
           <div className="relative">
-            <ProductBadges badges={(product as { badges?: string[] }).badges} className="absolute left-0 top-0 z-10" />
+            <ProductBadges badges={(product as { badges?: string[] }).badges} size="sm" className="absolute left-2 top-2 z-10" />
           <div
             ref={imageContainerRef}
             key={selectedShapeKey || "default"}
@@ -434,13 +490,6 @@ function ProductDetailContent() {
           </div>
           <p className="text-xs text-muted-foreground/80">Each cake is made with care, so final appearance may vary slightly from the photo.</p>
           <div ref={shapeSectionRef}>{shapeSelectorBlock}</div>
-        </div>
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-            <h1 className="font-display text-5xl text-brand-text">{productDisplayName(product.name)}</h1>
-            {isEditMode && <Badge variant="secondary" className="rounded-full">Editing</Badge>}
-          </div>
-          <p className="text-muted-foreground">{product.description}</p>
         </div>
       </header>
 
@@ -472,45 +521,6 @@ function ProductDetailContent() {
               </div>
             )}
 
-            <div className="space-y-2">
-              <Label htmlFor="qty" className="font-display text-xl text-brand-text">How many?</Label>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-10 w-10 rounded-xl bg-button text-stone-50 hover:bg-button-hover transition-all active:scale-95"
-                  onClick={() => {
-                    const cur = form.getValues("qty");
-                    if (cur > 1) form.setValue("qty", cur - 1);
-                  }}
-                >-</Button>
-                <Input
-                  id="qty"
-                  type="number"
-                  min={1}
-                  max={maxQty}
-                  className="w-16 rounded-xl text-center"
-                  {...form.register("qty")}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-10 w-10 rounded-xl bg-button text-stone-50 hover:bg-button-hover transition-all active:scale-95"
-                  onClick={() => {
-                    const cur = form.getValues("qty");
-                    if (cur < maxQty) form.setValue("qty", cur + 1);
-                  }}
-                >+</Button>
-              </div>
-              {form.formState.errors.qty ? (
-                <p className="text-xs text-red-600">{form.formState.errors.qty.message}</p>
-              ) : (
-                <p className="text-xs text-muted-foreground">Maximum allowed: {maxQty}</p>
-              )}
-            </div>
-
             {(() => {
               const toggleGroups = product.modifierGroups.filter(
                 (g) => g.options.length === 1 && g.options[0].name === g.name
@@ -525,10 +535,10 @@ function ProductDetailContent() {
                 const selected = selectedOptionsByGroup[group._id as string] ?? [];
                 const singleSelect = group.maxSelect === 1;
                 return (
-                  <div key={group._id} className="space-y-2 rounded-xl border p-4">
+                  <div key={group._id} className="space-y-4 rounded-2xl border-2 border-amber-300/80 bg-gradient-to-b from-amber-50/90 to-amber-100/50 p-6 shadow-sm sm:p-7">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1">
-                        <p className="font-display text-xl text-brand-text">{group.name}</p>
+                        <p className="font-display text-2xl font-bold text-brand-text sm:text-3xl">{group.name}</p>
                         {(group as { description?: string }).description && (
                           <ModifierGroupInfoIcon description={(group as { description?: string }).description!} />
                         )}
@@ -572,8 +582,8 @@ function ProductDetailContent() {
               return (
                 <>
                   {toggleGroups.length > 0 && (
-                    <div className="space-y-2 rounded-xl border p-4">
-                      <p className="font-display text-xl text-brand-text">Extras</p>
+                    <div ref={extrasSectionRef} className="space-y-4 rounded-2xl border-2 border-amber-300/80 bg-gradient-to-b from-amber-50/90 to-amber-100/50 p-6 shadow-sm sm:p-7">
+                      <p className="font-display text-2xl font-bold text-brand-text sm:text-3xl">Extras</p>
                       <div className="flex flex-wrap items-center gap-2">
                         {toggleGroups.map((group) => {
                           const option = group.options[0];
@@ -641,8 +651,11 @@ function ProductDetailContent() {
     {typeof document !== "undefined" &&
       createPortal(
         <div className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background/95 pt-3 pb-safe shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] supports-[backdrop-filter]:bg-background/90 sm:pt-4">
-          <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-4 sm:px-6">
+          <div className="mx-auto flex max-w-4xl flex-col gap-3 px-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div className="flex flex-col gap-0.5">
+              {form.formState.errors.qty && (
+                <p className="text-xs text-red-600">{form.formState.errors.qty.message}</p>
+              )}
               <span
                 className={`text-xl font-bold text-brand-text transition-transform duration-300 sm:text-2xl ${
                   priceAnimating ? "scale-110" : "scale-100"
@@ -656,13 +669,50 @@ function ProductDetailContent() {
                 </span>
               )}
             </div>
-            <Button
-              type="submit"
-              form="product-form"
-              className="min-h-12 shrink-0 rounded-full bg-button px-6 text-stone-50 hover:bg-button-hover active:scale-[0.98] sm:px-8"
-            >
-              {isEditMode ? "Update Cake Purchase" : "Purchase Cake"}
-            </Button>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-3 sm:flex-initial sm:flex-nowrap">
+              <div className="flex gap-1 rounded-lg border border-input bg-muted/30 px-1 py-0.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
+                  onClick={() => {
+                    const cur = form.getValues("qty");
+                    if (cur > 1) form.setValue("qty", cur - 1);
+                  }}
+                >
+                  −
+                </Button>
+                <Input
+                  id="qty"
+                  type="number"
+                  min={1}
+                  max={maxQty}
+                  form="product-form"
+                  className="h-7 w-10 border-0 bg-transparent p-0 text-center text-sm focus-visible:ring-0"
+                  {...form.register("qty")}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
+                  onClick={() => {
+                    const cur = form.getValues("qty");
+                    if (cur < maxQty) form.setValue("qty", cur + 1);
+                  }}
+                >
+                  +
+                </Button>
+              </div>
+              <Button
+                type="submit"
+                form="product-form"
+                className="min-h-12 w-full shrink-0 rounded-full bg-button px-6 text-stone-50 hover:bg-button-hover active:scale-[0.98] sm:w-auto sm:px-8 whitespace-nowrap"
+              >
+                {isEditMode ? "Update Cake Purchase" : "Purchase Cake"}
+              </Button>
+            </div>
           </div>
         </div>,
         document.body
@@ -686,6 +736,69 @@ function ProductDetailContent() {
           >
             Show me
           </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog open={showExtrasPromptModal} onOpenChange={setShowExtrasPromptModal}>
+      <AlertDialogContent
+        className="rounded-2xl"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        <AlertDialogHeader>
+          <AlertDialogTitle>Add extras to your cake?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Would you like to add Birthday Extras or Make it Extra Tipsy? Or continue without.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter className="flex-col-reverse gap-2 sm:flex-row">
+          <AlertDialogAction
+            className="rounded-full"
+            onClick={() => {
+              setShowExtrasPromptModal(false);
+              const values = form.getValues();
+              void doActualSubmit(values);
+            }}
+          >
+            No thanks, continue
+          </AlertDialogAction>
+          {product && (
+            <>
+              {product.modifierGroups
+                .filter((g) => {
+                  if (g.required) return false;
+                  const isBirthday = g.name === "Birthday Extras";
+                  const isExtraTipsy = g.name.toLowerCase() === "make it extra tipsy";
+                  if (!isBirthday && !isExtraTipsy) return false;
+                  const groupId = g._id as string;
+                  const selected = (selectedOptionsByGroup[groupId] ?? []).length > 0;
+                  return !selected;
+                })
+                .map((group) => {
+                  const opt = group.options[0];
+                  const price = opt ? `+$${(opt.priceDeltaCents / 100).toFixed(2)}` : "";
+                  const handleSelect = () => {
+                    if (opt) {
+                      toggleOption(group._id as string, opt._id as string, group.maxSelect, true);
+                    }
+                    setShowExtrasPromptModal(false);
+                    setTimeout(() => {
+                      extrasSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }, 150);
+                  };
+                  return (
+                    <button
+                      key={group._id}
+                      type="button"
+                      className="inline-flex h-9 min-h-[2.75rem] touch-manipulation items-center justify-center gap-2 rounded-full border border-input bg-background px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground active:scale-[0.98]"
+                      onClick={handleSelect}
+                    >
+                      {group.name} {price}
+                    </button>
+                  );
+                })}
+            </>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

@@ -56,6 +56,8 @@ export default defineSchema({
     productCode: v.optional(v.string()),
     name: v.string(),
     slug: v.string(),
+    /** Brief teaser for cards/listing (e.g. ~4–8 words). Falls back to start of description if blank. */
+    shortDescription: v.optional(v.string()),
     description: v.string(),
     images: v.array(v.string()),
     shapeImages: v.optional(
@@ -295,6 +297,7 @@ export default defineSchema({
     image: v.optional(v.string()),
     role: roleValidator,
     isActive: v.boolean(),
+    stripeCustomerId: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -451,6 +454,17 @@ export default defineSchema({
     .index("by_user_coupon", ["userId", "couponId"])
     .index("by_contactEmail_coupon", ["contactEmail", "couponId"])
     .index("by_orderId", ["orderId"]),
+
+  /** Coupons issued to customers via email blast or direct assignment. Used for "Available Rewards". */
+  couponIssuances: defineTable({
+    couponId: v.id("coupons"),
+    recipientEmail: v.string(),
+    source: v.union(v.literal("email_blast"), v.literal("direct")),
+    blastId: v.optional(v.id("emailBlasts")),
+    createdAt: v.number(),
+  })
+    .index("by_recipient", ["recipientEmail"])
+    .index("by_coupon", ["couponId"]),
 
   loyaltyAccounts: defineTable({
     userId: v.id("users"),

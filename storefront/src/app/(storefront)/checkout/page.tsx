@@ -42,6 +42,7 @@ import {
   clearPreferredFulfillment,
   getPreferredFulfillment,
 } from "@/lib/fulfillmentPreference";
+import { toast } from "sonner";
 import { productDisplayName } from "@/lib/utils";
 
 function fmt(cents: number) {
@@ -71,6 +72,15 @@ const FULFILLMENT_LABELS: Record<"pickup" | "delivery" | "shipping", string> = {
   delivery: "Local Delivery",
   shipping: "Shipping",
 };
+
+/** Extract customer-friendly message from setFulfillment errors (Convex wraps server errors). */
+function fulfillmentErrorMessage(err: unknown, maxMiles: number): string {
+  const msg = err instanceof Error ? err.message : "";
+  if (msg.includes("qualifies for local delivery") || msg.includes("deliver locally")) {
+    return `We deliver locally within ${maxMiles} miles and ship to addresses beyond that. Your address qualifies for local delivery.`;
+  }
+  return msg || "Update failed";
+}
 
 function PlaceFreeOrderButton({
   cartId,
@@ -144,7 +154,7 @@ function CheckoutContent() {
   const clerkPhone = user?.primaryPhoneNumber?.phoneNumber ?? "";
   const addresses = useQuery(
     api.addresses.listAddresses,
-    guestSessionId ? { guestSessionId } : "skip"
+    guestSessionId ? { guestSessionId, contactEmail: cart?.contactEmail ?? undefined } : "skip"
   );
 
   const [selectedMode, setSelectedMode] = useState<"" | "pickup" | "delivery" | "shipping">("");
@@ -177,6 +187,18 @@ function CheckoutContent() {
   const [savingFulfillment, setSavingFulfillment] = useState(false);
   const [fulfillmentSheetOpen, setFulfillmentSheetOpen] = useState(false);
   const [savingAddress, setSavingAddress] = useState(false);
+  const [showManualAddress, setShowManualAddress] = useState(false);
+  const [showAddAddress, setShowAddAddress] = useState(false);
+  const [addressToConfirm, setAddressToConfirm] = useState<{
+    formatted: string;
+    line1: string;
+    city: string;
+    state: string;
+    zip: string;
+    lat: number;
+    lng: number;
+    placeId?: string;
+  } | null>(null);
   const [couponCode, setCouponCode] = useState("");
   const [couponMessage, setCouponMessage] = useState<{ text: string; error: boolean } | null>(null);
 
@@ -211,7 +233,13 @@ function CheckoutContent() {
     const phone = cart.contactPhone ?? clerkPhone ?? "";
     setContactEmail(email);
     setContactPhone(phone);
-    if (cart.addressId) setSelectedAddressId(cart.addressId);
+    // Only sync address from cart when initializing or when cart confirms our selection.
+    // Avoid overwriting during setFulfillment in-flight (prevents address "bouncing").
+    setSelectedAddressId((prev) => {
+      if (!cart.addressId) return "";
+      if (!prev || prev === cart.addressId) return cart.addressId;
+      return prev;
+    });
     if (!selectedMode) {
       if (cart.fulfillmentMode) {
         setSelectedMode(cart.fulfillmentMode);
@@ -221,7 +249,7 @@ function CheckoutContent() {
       }
     }
     setContactSynced(true);
-  }, [cart, contactSynced, clerkEmail, clerkPhone]);
+  }, [cart, clerkEmail, clerkPhone]);
 
   const setContact = useMutation(api.cart.setContact);
   const autoSavedRef = useRef(false);
@@ -239,9 +267,13 @@ function CheckoutContent() {
 
   const needsAddress = selectedMode === "delivery" || selectedMode === "shipping";
   const needsSchedulingForMode = selectedMode === "pickup" || selectedMode === "delivery";
+  const cakeCount = cart?.items?.reduce((s, i) => s + i.qty, 0) ?? 0;
+  const deliveryConfig = useQuery(api.checkout.getDeliveryConfigQuery, {});
   const eligibility = useQuery(
     api.checkout.getEligibility,
-    needsAddress && selectedAddressId ? { addressId: selectedAddressId as never } : "skip"
+    needsAddress && selectedAddressId
+      ? { addressId: selectedAddressId as never, cakeCount }
+      : "skip"
   );
 
   useEffect(() => {
@@ -249,17 +281,23 @@ function CheckoutContent() {
       selectedMode === "delivery" &&
       eligibility &&
       !eligibility.delivery.eligible &&
-      eligibility.delivery.reason?.includes("over 10 miles")
+      eligibility.delivery.reason?.includes("Beyond")
     ) {
       setSelectedMode("shipping");
     }
   }, [selectedMode, eligibility]);
 
+
   const needsScheduling = needsSchedulingForMode;
   const contactReady = cart ? !!(cart.contactEmail && cart.contactPhone) : false;
   const fulfillmentReady = cart ? !!cart.fulfillmentMode : false;
   const schedulingReady = cart ? (!needsScheduling || !!cart.slotHoldId) : false;
-  const paymentReady = contactReady && fulfillmentReady && schedulingReady;
+  const addressReady =
+    !needsAddress ||
+    (!!cart?.addressId &&
+      (!addresses || addresses.some((a) => a._id === cart!.addressId)));
+  const paymentReady =
+    contactReady && fulfillmentReady && schedulingReady && addressReady;
 
   const contactSectionRef = useRef<HTMLElement>(null);
   const fulfillmentSectionRef = useRef<HTMLElement>(null);
@@ -268,18 +306,24 @@ function CheckoutContent() {
     contact?: string;
     fulfillment?: string;
     scheduling?: string;
+    address?: string;
   } | null>(null);
 
   const scrollToFirstBlocker = useCallback(() => {
     setSectionBlockMessage(null);
+    if (!fulfillmentReady) {
+      setSectionBlockMessage({ fulfillment: "Choose how to receive your order first." });
+      fulfillmentSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     if (!contactReady) {
       setSectionBlockMessage({ contact: "Save your email and phone to continue." });
       contactSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    if (!fulfillmentReady) {
-      setSectionBlockMessage({ fulfillment: "Choose a fulfillment mode to continue." });
-      fulfillmentSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!addressReady) {
+      setSectionBlockMessage({ address: "Enter a valid delivery or shipping address to continue." });
+      contactSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
     if (!schedulingReady) {
@@ -287,7 +331,7 @@ function CheckoutContent() {
       schedulingSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-  }, [contactReady, fulfillmentReady, schedulingReady]);
+  }, [addressReady, contactReady, fulfillmentReady, schedulingReady]);
 
   useEffect(() => {
     setSectionBlockMessage((prev) => {
@@ -295,10 +339,11 @@ function CheckoutContent() {
       const next = { ...prev };
       if (contactReady && next.contact) delete next.contact;
       if (fulfillmentReady && next.fulfillment) delete next.fulfillment;
+      if (addressReady && next.address) delete next.address;
       if (schedulingReady && next.scheduling) delete next.scheduling;
       return Object.keys(next).length === 0 ? null : next;
     });
-  }, [contactReady, fulfillmentReady, schedulingReady]);
+  }, [addressReady, contactReady, fulfillmentReady, schedulingReady]);
 
   const setFulfillment = useMutation(api.checkout.setFulfillment);
   useEffect(() => {
@@ -313,13 +358,26 @@ function CheckoutContent() {
       mode: selectedMode,
       addressId: selectedAddressId as never,
     })
-      .then(() => {
+      .then((result) => {
+        const overridden = result && typeof result === "object" && "overriddenToDelivery" in result && result.overriddenToDelivery;
+        if (overridden) {
+          setSelectedMode("delivery");
+          const maxMiles = deliveryConfig?.deliveryMaxMiles ?? 20;
+          toast.info(
+            `We deliver locally within ${maxMiles} miles and ship to addresses beyond that. Your address qualifies for local delivery.`
+          );
+        }
         clearPreferredFulfillment();
         setMessage("Fulfillment updated.");
       })
-      .catch((err) => setMessage(err instanceof Error ? err.message : "Update failed"))
+      .catch((err) => {
+        setMessage(err instanceof Error ? err.message : "Update failed");
+        if (selectedMode === "shipping" && cart) {
+          setSelectedMode(cart.fulfillmentMode ?? "delivery");
+        }
+      })
       .finally(() => setSavingFulfillment(false));
-  }, [selectedMode, selectedAddressId, cart?.fulfillmentMode, cart?.addressId, cart?._id, setFulfillment]);
+  }, [selectedMode, selectedAddressId, cart?.fulfillmentMode, cart?.addressId, cart?._id, deliveryConfig?.deliveryMaxMiles, setFulfillment]);
 
   const createAddress = useMutation(api.addresses.createAddress);
   const deleteAddress = useMutation(api.addresses.deleteAddress);
@@ -395,7 +453,7 @@ function CheckoutContent() {
             <div className="space-y-3">
               <SignUpButton mode="modal" forceRedirectUrl="/checkout">
                 <Button className="w-full rounded-full bg-button text-stone-50 hover:bg-button-hover">
-                  Create account — sign up FREE for points & rewards
+                  Create Account - Track Orders and Get exclusive offers
                 </Button>
               </SignUpButton>
               <div className="space-y-2">
@@ -425,8 +483,7 @@ function CheckoutContent() {
                 Are you sure?
               </AlertDialogTitle>
               <AlertDialogDescription>
-                Sign up for FREE and earn points, rewards, exclusive offers, and order
-                tracking. It only takes a moment.
+                Track your orders and get exclusive offers. Create an account for free.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter className="flex-col-reverse sm:flex-row gap-2">
@@ -447,7 +504,7 @@ function CheckoutContent() {
                   setGuestConfirmOpen(false);
                 }}
               >
-                Sign up for FREE
+                Create Account
               </Button>
               <AlertDialogAction
                 className="rounded-full"
@@ -562,6 +619,14 @@ function CheckoutContent() {
   }
 
   const pricing = cart.pricing;
+  const displayTotalCents =
+    pricing && pricing.subtotalCents != null
+      ? pricing.subtotalCents -
+        pricing.discountCents +
+        (selectedMode === "delivery" ? eligibility?.delivery.feeCents ?? 0 : 0) +
+        (selectedMode === "shipping" ? eligibility?.shipping.feeCents ?? 0 : 0) +
+        (cart.tipCents ?? 0)
+      : 0;
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6">
@@ -582,236 +647,15 @@ function CheckoutContent() {
         )}
       </header>
 
-      {/* ── 1. Contact & Address ── */}
-      <section ref={contactSectionRef}>
-        <Card className="rounded-2xl">
-          <CardHeader>
-            <CardTitle className="font-display text-2xl text-brand-text">
-              {needsAddress ? "Contact & delivery info" : "Contact information"}
-            </CardTitle>
-            <CardDescription>
-              {clerkEmail && (cart?.contactEmail || contactEmail)
-                ? "Using your account email. Update if needed."
-                : "At least one of email or phone required for order confirmation"}
-            </CardDescription>
-            {sectionBlockMessage?.contact && (
-              <p className="text-sm text-amber-600 font-medium">{sectionBlockMessage.contact}</p>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <form
-              autoComplete="on"
-              onSubmit={(e) => e.preventDefault()}
-              className="space-y-4"
-            >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="contactEmail">
-                  Email <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="contactEmail"
-                  name="email"
-                  type="email"
-                  className="rounded-xl"
-                  placeholder="you@example.com"
-                  autoComplete="email"
-                  value={contactEmail}
-                  onChange={(e) => setContactEmail(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="contactPhone">
-                  Phone <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="contactPhone"
-                  name="tel"
-                  type="tel"
-                  className="rounded-xl"
-                  placeholder="+1 (555) 555-5555"
-                  autoComplete="tel"
-                  title="US phone: +1 followed by 10 digits"
-                  value={contactPhone}
-                  onChange={(e) => setContactPhone(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  US format: +1 followed by 10 digits (e.g. +1-954-637-7608)
-                </p>
-              </div>
-            </div>
-            <Button
-              type="submit"
-              variant="outline"
-              disabled={savingContact}
-              onClick={async (e) => {
-                e.preventDefault();
-                setSavingContact(true);
-                try {
-                  await setContact({
-                    cartId: cart._id,
-                    email: contactEmail.trim() || undefined,
-                    phone: contactPhone.trim() || undefined,
-                  });
-                  setMessage("Contact info saved.");
-                } catch (err) {
-                  setMessage(err instanceof Error ? err.message : "Save failed");
-                } finally {
-                  setSavingContact(false);
-                }
-              }}
-            >
-              {savingContact ? "Saving…" : cart.contactEmail ? "Update contact" : "Save contact"}
-            </Button>
-            </form>
-
-            {needsAddress && (
-              <>
-                <div className="border-t pt-4" />
-                {(addresses ?? []).length > 0 && (
-                  <div className="space-y-2">
-                    <Label className="text-base">Saved addresses</Label>
-                    <div className="space-y-2">
-                      {(addresses ?? []).map((address) => (
-                        <div
-                          key={address._id}
-                          className="flex items-center justify-between gap-2 rounded border p-2 text-sm transition-colors hover:bg-muted/50"
-                        >
-                          <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
-                            <input
-                              type="radio"
-                              name="selectedAddress"
-                              checked={selectedAddressId === address._id}
-                              onChange={() => setSelectedAddressId(address._id as string)}
-                            />
-                            <span className="truncate">{address.formatted}</span>
-                          </label>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive"
-                            aria-label="Remove address"
-                            onClick={async (e) => {
-                              e.preventDefault();
-                              try {
-                                await deleteAddress({
-                                  addressId: address._id,
-                                  guestSessionId: guestSessionId || undefined,
-                                });
-                                if (selectedAddressId === address._id) setSelectedAddressId("");
-                                setMessage("Address removed.");
-                              } catch (err) {
-                                setMessage(err instanceof Error ? err.message : "Failed to remove");
-                              }
-                            }}
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="space-y-2">
-                  <Label className="text-base">{(addresses ?? []).length > 0 ? "Add another address" : "Delivery address"}</Label>
-                  <AddressAutocomplete
-                    onSelect={async (addr) => {
-                      try {
-                        const addressId = await createAddress({
-                          ownerId: guestSessionId,
-                          formatted: addr.formatted,
-                          line1: addr.line1,
-                          city: addr.city,
-                          state: addr.state,
-                          zip: addr.zip,
-                          lat: addr.lat,
-                          lng: addr.lng,
-                          placeId: addr.placeId,
-                        });
-                        setSelectedAddressId(addressId);
-                        setMessage("Address saved.");
-                      } catch (err) {
-                        setMessage(err instanceof Error ? err.message : "Address save failed");
-                      }
-                    }}
-                  />
-                  <div className="space-y-2">
-                    <Label htmlFor="formatted" className="text-muted-foreground">Or enter manually</Label>
-                    <Input
-                      id="formatted"
-                      placeholder="Full address"
-                      autoComplete="street-address"
-                      value={newAddress.formatted}
-                      onChange={(event) =>
-                        setNewAddress((prev) => ({ ...prev, formatted: event.target.value }))
-                      }
-                    />
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <Input
-                      placeholder="City"
-                      autoComplete="address-level2"
-                      value={newAddress.city}
-                      onChange={(event) =>
-                        setNewAddress((prev) => ({ ...prev, city: event.target.value }))
-                      }
-                    />
-                    <Input
-                      placeholder="State"
-                      autoComplete="address-level1"
-                      value={newAddress.state}
-                      onChange={(event) =>
-                        setNewAddress((prev) => ({ ...prev, state: event.target.value }))
-                      }
-                    />
-                    <Input
-                      placeholder="Zip"
-                      autoComplete="postal-code"
-                      value={newAddress.zip}
-                      onChange={(event) =>
-                        setNewAddress((prev) => ({ ...prev, zip: event.target.value }))
-                      }
-                    />
-                  </div>
-                  <Button
-                    disabled={savingAddress}
-                    onClick={async () => {
-                      setSavingAddress(true);
-                      try {
-                        const addressId = await createAddress({
-                          ownerId: guestSessionId,
-                          formatted: newAddress.formatted,
-                          line1: newAddress.line1,
-                          city: newAddress.city,
-                          state: newAddress.state,
-                          zip: newAddress.zip,
-                          lat: Number(newAddress.lat),
-                          lng: Number(newAddress.lng),
-                        });
-                        setSelectedAddressId(addressId);
-                        setMessage("Address saved.");
-                      } catch (error) {
-                        setMessage(error instanceof Error ? error.message : "Address save failed");
-                      } finally {
-                        setSavingAddress(false);
-                      }
-                    }}
-                  >
-                    {savingAddress ? "Saving…" : "Save address"}
-                  </Button>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </section>
-
-      {/* ── 3. Fulfillment Mode ── */}
+      {/* ── 1. Fulfillment (choose first) ── */}
       <section ref={fulfillmentSectionRef}>
         <Card className="rounded-2xl">
           <CardHeader>
             <CardTitle className="font-display text-2xl text-brand-text">Fulfillment</CardTitle>
             <CardDescription>How would you like to receive your order?</CardDescription>
+            <p className="text-xs text-muted-foreground">
+              Local delivery within {deliveryConfig?.deliveryMaxMiles ?? 20} miles; beyond that, shipping only.
+            </p>
             {sectionBlockMessage?.fulfillment && (
               <p className="text-sm text-amber-600 font-medium">{sectionBlockMessage.fulfillment}</p>
             )}
@@ -841,24 +685,37 @@ function CheckoutContent() {
                 </SheetHeader>
                 <div className="flex flex-col gap-2 px-6 pb-8 pt-4">
                   {(["pickup", "delivery", "shipping"] as const).map((mode) => {
+                    // Only disable when address exists and is beyond zone — not when address is missing/removed
                     const deliveryDisabled = Boolean(
                       mode === "delivery" &&
                         needsAddress &&
                         selectedAddressId &&
                         eligibility &&
-                        !eligibility.delivery.eligible
+                        !eligibility.delivery.eligible &&
+                        eligibility.delivery.reason !== "Address not found" &&
+                        eligibility.delivery.reason !== "No address selected"
                     );
+                    // Disable shipping when address is within delivery zone — we deliver locally, ship only beyond
+                    const shippingDisabled = Boolean(
+                      mode === "shipping" &&
+                        needsAddress &&
+                        selectedAddressId &&
+                        eligibility?.delivery.eligible
+                    );
+                    const maxMiles = deliveryConfig?.deliveryMaxMiles ?? 20;
                     const canApply =
                       mode === "pickup" || (needsAddress && selectedAddressId);
                     return (
                       <Button
                         key={mode}
                         variant={selectedMode === mode ? "default" : "outline"}
-                        disabled={deliveryDisabled || savingFulfillment}
+                        disabled={deliveryDisabled || shippingDisabled || savingFulfillment}
                         title={
                           deliveryDisabled
-                            ? eligibility?.delivery.reason ?? "Address over 10 miles — use shipping"
-                            : undefined
+                            ? eligibility?.delivery.reason ?? "Address beyond delivery radius — use shipping"
+                            : shippingDisabled
+                              ? `We deliver locally within ${maxMiles} miles and ship to addresses beyond that. Your address qualifies for local delivery.`
+                              : undefined
                         }
                         className={`h-14 min-h-[44px] rounded-xl transition-all duration-150 active:scale-[0.98] ${selectedMode === mode ? "bg-button text-stone-50 hover:bg-button-hover" : ""}`}
                         onClick={async () => {
@@ -868,7 +725,7 @@ function CheckoutContent() {
                           if (cart.fulfillmentMode === mode) return;
                           setSavingFulfillment(true);
                           try {
-                            await setFulfillment({
+                            const result = await setFulfillment({
                               cartId: cart._id,
                               mode,
                               addressId:
@@ -876,10 +733,21 @@ function CheckoutContent() {
                                   ? undefined
                                   : ((selectedAddressId as never) || undefined),
                             });
+                            const overridden = result && typeof result === "object" && "overriddenToDelivery" in result && result.overriddenToDelivery;
+                            if (overridden) {
+                              setSelectedMode("delivery");
+                              const maxMiles = deliveryConfig?.deliveryMaxMiles ?? 20;
+                              toast.info(
+                                `We deliver locally within ${maxMiles} miles and ship to addresses beyond that. Your address qualifies for local delivery.`
+                              );
+                            }
                             clearPreferredFulfillment();
                             setMessage("Fulfillment updated.");
                           } catch (err) {
                             setMessage(err instanceof Error ? err.message : "Update failed");
+                            if (mode === "shipping") {
+                              setSelectedMode(cart.fulfillmentMode ?? "delivery");
+                            }
                           } finally {
                             setSavingFulfillment(false);
                           }
@@ -913,11 +781,15 @@ function CheckoutContent() {
               </p>
             ) : selectedMode === "delivery" ? (
               <p className="text-xs text-muted-foreground">
-                Add a delivery address above to schedule your Local Delivery
+                Add your delivery address below to schedule Local Delivery
               </p>
             ) : selectedMode === "shipping" ? (
               <p className="text-xs text-muted-foreground">
-                Ships within 1 business day. Typically delivered in 2-3 business days.
+                Ships within 1 business day. Typically delivered in 3 business days.
+                {eligibility ? (
+                  <> Shipping: {fmt(eligibility.shipping.feeCents)}
+                  {cakeCount > 1 ? ` (${cakeCount} cakes × ${fmt(Math.round(eligibility.shipping.feeCents / cakeCount))})` : ""}.</>
+                ) : null}
               </p>
             ) : null}
 
@@ -939,7 +811,324 @@ function CheckoutContent() {
         </Card>
       </section>
 
-      {/* ── 4. Scheduling (pickup & delivery only; shipping ships within 24–48 hrs) ── */}
+      {/* ── 2. Contact & Address ── */}
+      <section ref={contactSectionRef}>
+        <Card className="rounded-2xl">
+          <CardHeader>
+            <CardTitle className="font-display text-2xl text-brand-text">
+              {needsAddress ? "Contact & Delivery Info" : "Contact information"}
+            </CardTitle>
+            <CardDescription>
+              {clerkEmail && (cart?.contactEmail || contactEmail)
+                ? "Using your account email. Update if needed."
+                : "At least one of email or phone required for order confirmation"}
+            </CardDescription>
+            {sectionBlockMessage?.contact && (
+              <p className="text-sm text-amber-600 font-medium">{sectionBlockMessage.contact}</p>
+            )}
+            {sectionBlockMessage?.address && (
+              <p className="text-sm text-amber-600 font-medium">{sectionBlockMessage.address}</p>
+            )}
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <form
+              autoComplete="on"
+              onSubmit={(e) => e.preventDefault()}
+              className="space-y-4"
+            >
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="contactEmail">
+                  Email <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="contactEmail"
+                  name="email"
+                  type="email"
+                  className="rounded-xl"
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  value={contactEmail}
+                  onChange={(e) => setContactEmail(e.target.value)}
+                  onBlur={async () => {
+                    if (!cart || savingContact) return;
+                    const email = contactEmail.trim() || undefined;
+                    const phone = contactPhone.trim() || undefined;
+                    if (email === (cart.contactEmail ?? "") && phone === (cart.contactPhone ?? ""))
+                      return;
+                    setSavingContact(true);
+                    try {
+                      await setContact({
+                        cartId: cart._id,
+                        email,
+                        phone,
+                      });
+                      setMessage("Contact info saved.");
+                    } catch (err) {
+                      setMessage(err instanceof Error ? err.message : "Save failed");
+                    } finally {
+                      setSavingContact(false);
+                    }
+                  }}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="contactPhone">
+                  Phone <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="contactPhone"
+                  name="tel"
+                  type="tel"
+                  className="rounded-xl"
+                  placeholder="+1 (555) 555-5555"
+                  autoComplete="tel"
+                  value={contactPhone}
+                  onChange={(e) => setContactPhone(e.target.value)}
+                  onBlur={async () => {
+                    if (!cart || savingContact) return;
+                    const email = contactEmail.trim() || undefined;
+                    const phone = contactPhone.trim() || undefined;
+                    if (email === (cart.contactEmail ?? "") && phone === (cart.contactPhone ?? ""))
+                      return;
+                    setSavingContact(true);
+                    try {
+                      await setContact({
+                        cartId: cart._id,
+                        email,
+                        phone,
+                      });
+                      setMessage("Contact info saved.");
+                    } catch (err) {
+                      setMessage(err instanceof Error ? err.message : "Save failed");
+                    } finally {
+                      setSavingContact(false);
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            </form>
+
+            {needsAddress && (
+              <>
+                <div className="border-t pt-4" />
+                {addressToConfirm ? (
+                  <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
+                    <p className="text-sm font-medium text-foreground">Please confirm your address</p>
+                    <p className="text-base leading-relaxed text-foreground">
+                      {addressToConfirm.line1}
+                      <br />
+                      {[addressToConfirm.city, addressToConfirm.state, addressToConfirm.zip]
+                        .filter(Boolean)
+                        .join(", ")}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        disabled={savingAddress}
+                        onClick={async () => {
+                          setSavingAddress(true);
+                          try {
+                            const addressId = await createAddress({
+                              ownerId: guestSessionId,
+                              formatted: addressToConfirm.formatted,
+                              line1: addressToConfirm.line1,
+                              city: addressToConfirm.city,
+                              state: addressToConfirm.state,
+                              zip: addressToConfirm.zip,
+                              lat: addressToConfirm.lat,
+                              lng: addressToConfirm.lng,
+                              placeId: addressToConfirm.placeId,
+                            });
+                            setSelectedAddressId(addressId);
+                            setAddressToConfirm(null);
+                            setShowAddAddress(false);
+                            setMessage("Address saved.");
+                          } catch (err) {
+                            setMessage(err instanceof Error ? err.message : "Address save failed");
+                          } finally {
+                            setSavingAddress(false);
+                          }
+                        }}
+                      >
+                        {savingAddress ? "Saving…" : "Confirm address"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        disabled={savingAddress}
+                        onClick={() => setAddressToConfirm(null)}
+                      >
+                        Change
+                      </Button>
+                    </div>
+                  </div>
+                ) : (addresses ?? []).length > 0 && !showAddAddress ? (
+                  <div className="space-y-2">
+                    <Label className="text-base">Saved addresses</Label>
+                    <div className="space-y-2">
+                      {(addresses ?? []).map((address) => (
+                        <div
+                          key={address._id}
+                          className="flex items-center justify-between gap-2 rounded border p-2 text-sm transition-colors hover:bg-muted/50"
+                        >
+                          <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                            <input
+                              type="radio"
+                              name="selectedAddress"
+                              checked={selectedAddressId === address._id}
+                              onChange={() => setSelectedAddressId(address._id as string)}
+                            />
+                            <span className="truncate">{address.formatted}</span>
+                          </label>
+                          {!address.ownerId?.startsWith("email:") &&
+                            !address.ownerId?.startsWith("import:") && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+                              aria-label="Remove address"
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                try {
+                                  await deleteAddress({
+                                    addressId: address._id,
+                                    guestSessionId: guestSessionId || undefined,
+                                  });
+                                  if (selectedAddressId === address._id) setSelectedAddressId("");
+                                  setMessage("Address removed.");
+                                } catch (err) {
+                                  setMessage(err instanceof Error ? err.message : "Failed to remove");
+                                }
+                              }}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <Button
+                      variant="link"
+                      className="h-auto p-0 text-sm text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowAddAddress(true)}
+                    >
+                      Add new address
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label className="text-base">
+                      {(addresses ?? []).length > 0 ? "Search for a new address" : "Delivery address"}
+                    </Label>
+                    <AddressAutocomplete
+                      placeholder="Search for your address"
+                      onSelect={(addr) => {
+                        if (typeof addr.lat === "number" && typeof addr.lng === "number") {
+                          setAddressToConfirm({
+                            formatted: addr.formatted,
+                            line1: addr.line1,
+                            city: addr.city,
+                            state: addr.state,
+                            zip: addr.zip,
+                            lat: addr.lat,
+                            lng: addr.lng,
+                            placeId: addr.placeId,
+                          });
+                        }
+                      }}
+                    />
+                    {showAddAddress && (
+                      <Button
+                        variant="link"
+                        className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowAddAddress(false)}
+                      >
+                        Back to saved addresses
+                      </Button>
+                    )}
+                  </div>
+                )}
+                <Button
+                  variant="link"
+                  className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowManualAddress((prev) => !prev)}
+                >
+                  {showManualAddress ? "Hide manual entry" : "Enter address manually"}
+                </Button>
+                  {showManualAddress && (
+                    <div className="space-y-2 rounded-lg border p-3">
+                      <Input
+                        id="formatted"
+                        placeholder="Full address"
+                        autoComplete="street-address"
+                        value={newAddress.formatted}
+                        onChange={(event) =>
+                          setNewAddress((prev) => ({ ...prev, formatted: event.target.value }))
+                        }
+                      />
+                      <div className="grid grid-cols-3 gap-2">
+                        <Input
+                          placeholder="City"
+                          autoComplete="address-level2"
+                          value={newAddress.city}
+                          onChange={(event) =>
+                            setNewAddress((prev) => ({ ...prev, city: event.target.value }))
+                          }
+                        />
+                        <Input
+                          placeholder="State"
+                          autoComplete="address-level1"
+                          value={newAddress.state}
+                          onChange={(event) =>
+                            setNewAddress((prev) => ({ ...prev, state: event.target.value }))
+                          }
+                        />
+                        <Input
+                          placeholder="Zip"
+                          autoComplete="postal-code"
+                          value={newAddress.zip}
+                          onChange={(event) =>
+                            setNewAddress((prev) => ({ ...prev, zip: event.target.value }))
+                          }
+                        />
+                      </div>
+                      <Button
+                        disabled={savingAddress}
+                        size="sm"
+                        onClick={async () => {
+                          setSavingAddress(true);
+                          try {
+                            const addressId = await createAddress({
+                              ownerId: guestSessionId,
+                              formatted: newAddress.formatted,
+                              line1: newAddress.line1 || newAddress.formatted,
+                              city: newAddress.city,
+                              state: newAddress.state,
+                              zip: newAddress.zip,
+                              lat: Number(newAddress.lat),
+                              lng: Number(newAddress.lng),
+                            });
+                            setSelectedAddressId(addressId);
+                            setMessage("Address saved.");
+                            setShowManualAddress(false);
+                          } catch (error) {
+                            setMessage(error instanceof Error ? error.message : "Address save failed");
+                          } finally {
+                            setSavingAddress(false);
+                          }
+                        }}
+                      >
+                        {savingAddress ? "Saving…" : "Save address"}
+                      </Button>
+                    </div>
+                  )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ── 3. Scheduling (pickup & delivery only; shipping ships within 24–48 hrs) ── */}
       {needsScheduling && (
       <section ref={schedulingSectionRef}>
         <Card className="rounded-2xl">
@@ -1213,19 +1402,79 @@ function CheckoutContent() {
               </Badge>
             )}
 
-            {pricing && (
-              <div className="rounded-xl border bg-muted/30 px-4 py-3">
-                <p className="text-sm font-semibold">
-                  Total: {fmt(pricing.totalCents)}
-                  {cart.items && (
-                    <span className="ml-2 font-normal text-muted-foreground">
-                      ({cart.items.length} item{cart.items.length === 1 ? "" : "s"})
-                    </span>
+            {pricing && cart.items && (
+              <div className="rounded-xl border bg-muted/30 px-4 py-3 space-y-3">
+                <p className="text-sm font-medium text-muted-foreground">Order details</p>
+                <ul className="space-y-2 text-sm">
+                  {cart.items.map((item) => {
+                    const lineCents = item.unitPriceSnapshotCents * item.qty;
+                    return (
+                      <li key={item._id} className="flex justify-between gap-2">
+                        <span>
+                          {productDisplayName(item.productName, item.variantName)} × {item.qty}
+                        </span>
+                        <span>{fmt(lineCents)}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <div className="border-t pt-2 space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Subtotal</span>
+                    <span>{fmt(pricing.subtotalCents)}</span>
+                  </div>
+                  {pricing.discountCents > 0 && (
+                    <div className="flex justify-between text-green-600">
+                      <span>Discount</span>
+                      <span>-{fmt(pricing.discountCents)}</span>
+                    </div>
                   )}
-                </p>
+                  {selectedMode === "delivery" && eligibility && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">
+                        Delivery fee{eligibility.delivery.distanceMiles != null ? ` (${eligibility.delivery.distanceMiles} mi)` : ""}
+                      </span>
+                      <span>{fmt(eligibility.delivery.feeCents)}</span>
+                    </div>
+                  )}
+                  {selectedMode === "shipping" && eligibility && eligibility.shipping.feeCents > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">
+                        Shipping{cakeCount > 1 ? ` (${cakeCount} cakes × ${fmt(Math.round(eligibility.shipping.feeCents / cakeCount))})` : ""}
+                      </span>
+                      <span>{fmt(eligibility.shipping.feeCents)}</span>
+                    </div>
+                  )}
+                  {(cart.tipCents ?? 0) > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Tip</span>
+                      <span>{fmt(cart.tipCents)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between font-semibold pt-1">
+                    <span>Total</span>
+                    <span>
+                      {fmt(
+                        pricing.subtotalCents -
+                        pricing.discountCents +
+                        (selectedMode === "delivery" ? eligibility?.delivery.feeCents ?? 0 : 0) +
+                        (selectedMode === "shipping" ? eligibility?.shipping.feeCents ?? 0 : 0) +
+                        (cart.tipCents ?? 0)
+                      )}
+                    </span>
+                  </div>
+                </div>
               </div>
             )}
-            {pricing?.totalCents === 0 ? (
+            {pricing && (() => {
+              const displayTotalCents =
+                pricing.subtotalCents -
+                pricing.discountCents +
+                (selectedMode === "delivery" ? eligibility?.delivery.feeCents ?? 0 : 0) +
+                (selectedMode === "shipping" ? eligibility?.shipping.feeCents ?? 0 : 0) +
+                (cart.tipCents ?? 0);
+              return displayTotalCents === 0;
+            })() ? (
               <PlaceFreeOrderButton
                 cartId={cart._id}
                 onSuccess={() => {

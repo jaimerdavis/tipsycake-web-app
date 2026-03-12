@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery } from "convex/react";
 
 import { api } from "../../../../convex/_generated/api";
@@ -38,22 +39,30 @@ type EditCoupon = {
   minSubtotalCents?: number;
   maxRedemptions?: number;
   maxRedemptionsPerCustomer?: number;
+  includeProductIds?: Id<"products">[];
+  includeCategoryTags?: string[];
+  expiresAt?: number;
   enabled: boolean;
   stackable: boolean;
 };
 
 function EditCouponForm({
   coupon,
+  products,
   onSave,
   onError,
 }: {
   coupon: EditCoupon;
+  products: Array<{ _id: Id<"products">; name: string }>;
   onSave: (updates: {
     type?: "percent" | "fixed" | "free_delivery";
     value?: number;
     minSubtotalCents?: number;
     maxRedemptions?: number;
     maxRedemptionsPerCustomer?: number;
+    includeProductIds?: Id<"products">[];
+    includeCategoryTags?: string[];
+    expiresAt?: number;
     enabled?: boolean;
     stackable?: boolean;
   }) => Promise<void>;
@@ -65,6 +74,9 @@ function EditCouponForm({
     minSubtotal: coupon.minSubtotalCents ? String(coupon.minSubtotalCents / 100) : "0",
     maxRedemptions: coupon.maxRedemptions ? String(coupon.maxRedemptions) : "",
     maxRedemptionsPerCustomer: coupon.maxRedemptionsPerCustomer ? String(coupon.maxRedemptionsPerCustomer) : "",
+    includeProductIds: coupon.includeProductIds ?? [],
+    includeCategoryTags: (coupon.includeCategoryTags ?? []).join(", "),
+    expiresAt: coupon.expiresAt ? new Date(coupon.expiresAt).toISOString().slice(0, 10) : "",
     enabled: coupon.enabled,
     stackable: coupon.stackable,
   });
@@ -83,6 +95,13 @@ function EditCouponForm({
             minSubtotalCents: Number(editForm.minSubtotal) ? Math.round(Number(editForm.minSubtotal) * 100) : undefined,
             maxRedemptions: Number(editForm.maxRedemptions) || undefined,
             maxRedemptionsPerCustomer: Number(editForm.maxRedemptionsPerCustomer) || undefined,
+            includeProductIds: editForm.includeProductIds.length ? editForm.includeProductIds : undefined,
+            includeCategoryTags: editForm.includeCategoryTags.trim()
+              ? editForm.includeCategoryTags.split(/,\s*/).map((t) => t.trim()).filter(Boolean)
+              : undefined,
+            expiresAt: editForm.expiresAt
+              ? Math.floor(new Date(editForm.expiresAt + "T23:59:59").getTime())
+              : undefined,
             enabled: editForm.enabled,
             stackable: editForm.stackable,
           });
@@ -139,6 +158,49 @@ function EditCouponForm({
           onChange={(e) => setEditForm((p) => ({ ...p, maxRedemptionsPerCustomer: e.target.value }))}
         />
       </div>
+      <div className="space-y-2">
+        <Label>Product targeting (optional)</Label>
+        <p className="text-xs text-muted-foreground">
+          Leave empty for all products. Select products to restrict discount.
+        </p>
+        <div className="max-h-40 overflow-y-auto rounded-md border p-2">
+          {(products ?? []).map((p) => (
+            <label key={p._id} className="flex items-center gap-2 py-1 text-sm">
+              <input
+                type="checkbox"
+                checked={editForm.includeProductIds.includes(p._id)}
+                onChange={(e) => {
+                  const next = e.target.checked
+                    ? [...editForm.includeProductIds, p._id]
+                    : editForm.includeProductIds.filter((id) => id !== p._id);
+                  setEditForm((prev) => ({ ...prev, includeProductIds: next }));
+                }}
+              />
+              {p.name}
+            </label>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label>Include tags (optional)</Label>
+        <Input
+          placeholder="new_flavor, popular (comma-separated)"
+          value={editForm.includeCategoryTags}
+          onChange={(e) =>
+            setEditForm((prev) => ({ ...prev, includeCategoryTags: e.target.value }))
+          }
+        />
+      </div>
+      <div className="space-y-2">
+        <Label>Expires (optional)</Label>
+        <Input
+          type="date"
+          value={editForm.expiresAt}
+          onChange={(e) =>
+            setEditForm((prev) => ({ ...prev, expiresAt: e.target.value }))
+          }
+        />
+      </div>
       <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
@@ -166,11 +228,13 @@ function EditCouponForm({
 
 export default function AdminCouponsPage() {
   const coupons = useQuery(api.coupons.listCoupons);
+  const products = useQuery(api.admin.catalog.listProducts);
   const createCoupon = useMutation(api.coupons.createCoupon);
   const updateCoupon = useMutation(api.coupons.updateCoupon);
   const deleteCoupon = useMutation(api.coupons.deleteCoupon);
   const [message, setMessage] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<Id<"coupons"> | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [editingCoupon, setEditingCoupon] = useState<{
     _id: Id<"coupons">;
     code: string;
@@ -179,6 +243,9 @@ export default function AdminCouponsPage() {
     minSubtotalCents?: number;
     maxRedemptions?: number;
     maxRedemptionsPerCustomer?: number;
+    includeProductIds?: Id<"products">[];
+    includeCategoryTags?: string[];
+    expiresAt?: number;
     enabled: boolean;
     stackable: boolean;
   } | null>(null);
@@ -189,6 +256,9 @@ export default function AdminCouponsPage() {
     minSubtotal: "0",
     maxRedemptions: "",
     maxRedemptionsPerCustomer: "",
+    includeProductIds: [] as Id<"products">[],
+    includeCategoryTags: "",
+    expiresAt: "",
     enabled: true,
     stackable: false,
   });
@@ -200,7 +270,20 @@ export default function AdminCouponsPage() {
         <p className="text-sm text-muted-foreground">
           Create and manage discount codes.
         </p>
-        {message ? <Badge variant="secondary">{message}</Badge> : null}
+        <div className="flex flex-wrap gap-2">
+          {message ? <Badge variant="secondary">{message}</Badge> : null}
+          <Link href="/admin/abandoned-carts" className="text-sm text-primary hover:underline">
+            Abandoned Carts
+          </Link>
+          <span className="text-muted-foreground">·</span>
+          <Link href="/admin/analytics" className="text-sm text-primary hover:underline">
+            Analytics
+          </Link>
+          <span className="text-muted-foreground">·</span>
+          <Link href="/admin/orders" className="text-sm text-primary hover:underline">
+            Orders
+          </Link>
+        </div>
       </header>
 
       <Card>
@@ -294,6 +377,54 @@ export default function AdminCouponsPage() {
             />
             Stackable
           </label>
+          <div className="sm:col-span-2 space-y-2">
+            <Label>Product targeting (optional)</Label>
+            <p className="text-xs text-muted-foreground">
+              Leave empty for all products. Select products to restrict discount to those only.
+            </p>
+            <div className="max-h-40 overflow-y-auto rounded-md border p-2">
+              {(products ?? []).map((p) => (
+                <label key={p._id} className="flex items-center gap-2 py-1 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.includeProductIds.includes(p._id)}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...form.includeProductIds, p._id]
+                        : form.includeProductIds.filter((id) => id !== p._id);
+                      setForm((prev) => ({ ...prev, includeProductIds: next }));
+                    }}
+                  />
+                  {p.name}
+                </label>
+              ))}
+              {(products ?? []).length === 0 ? (
+                <p className="text-xs text-muted-foreground">No products</p>
+              ) : null}
+            </div>
+          </div>
+          <div className="space-y-2 sm:col-span-2">
+            <Label htmlFor="includeTags">Include tags (optional)</Label>
+            <Input
+              id="includeTags"
+              placeholder="new_flavor, popular (comma-separated)"
+              value={form.includeCategoryTags}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, includeCategoryTags: e.target.value }))
+              }
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="expiresAt">Expires (optional)</Label>
+            <Input
+              id="expiresAt"
+              type="date"
+              value={form.expiresAt}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, expiresAt: e.target.value }))
+              }
+            />
+          </div>
           <div className="sm:col-span-2">
             <Button
               onClick={async () => {
@@ -301,11 +432,18 @@ export default function AdminCouponsPage() {
                   await createCoupon({
                     code: form.code,
                     type: form.type,
-                    value: Number(form.value),
+                    value: form.type === "fixed" ? Math.round(Number(form.value) * 100) : Number(form.value),
                     minSubtotalCents: Number(form.minSubtotal) ? Math.round(Number(form.minSubtotal) * 100) : undefined,
                     maxRedemptions: Number(form.maxRedemptions) || undefined,
                     maxRedemptionsPerCustomer:
                       Number(form.maxRedemptionsPerCustomer) || undefined,
+                    includeProductIds: form.includeProductIds.length ? form.includeProductIds : undefined,
+                    includeCategoryTags: form.includeCategoryTags.trim()
+                      ? form.includeCategoryTags.split(/,\s*/).map((t) => t.trim()).filter(Boolean)
+                      : undefined,
+                    expiresAt: form.expiresAt
+                      ? Math.floor(new Date(form.expiresAt + "T23:59:59").getTime())
+                      : undefined,
                     stackable: form.stackable,
                     enabled: form.enabled,
                   });
@@ -317,6 +455,9 @@ export default function AdminCouponsPage() {
                     minSubtotal: "0",
                     maxRedemptions: "",
                     maxRedemptionsPerCustomer: "",
+                    includeProductIds: [],
+                    includeCategoryTags: "",
+                    expiresAt: "",
                     enabled: true,
                     stackable: false,
                   });
@@ -337,9 +478,27 @@ export default function AdminCouponsPage() {
           <CardDescription>Configured coupon list</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
-          {(coupons ?? []).map((coupon) => (
-            <div key={coupon._id} className="flex items-center justify-between gap-2 rounded border p-3 text-sm">
-              <div>
+          {(coupons ?? []).map((coupon) => {
+            const productNames =
+              coupon.includeProductIds?.length && products
+                ? coupon.includeProductIds
+                    .map((id) => products.find((p) => p._id === id)?.name)
+                    .filter(Boolean) as string[]
+                : [];
+            const validOn =
+              productNames.length > 0
+                ? `Valid on: ${productNames.join(", ")}`
+                : coupon.includeCategoryTags?.length
+                  ? `Valid on tags: ${coupon.includeCategoryTags.join(", ")}`
+                  : null;
+            const expiresStr = coupon.expiresAt
+              ? new Date(coupon.expiresAt) < new Date()
+                ? "Expired"
+                : `Expires ${new Date(coupon.expiresAt).toLocaleDateString()}`
+              : null;
+            return (
+              <div key={coupon._id} className="flex items-center justify-between gap-2 rounded border p-3 text-sm">
+                <div>
                 <p className="font-medium">{coupon.code}</p>
                 <p className="text-xs text-muted-foreground">
                   {coupon.type === "percent"
@@ -348,6 +507,11 @@ export default function AdminCouponsPage() {
                       ? `$${(coupon.value / 100).toFixed(2)} off`
                       : "Free delivery"}
                 </p>
+                {(validOn || expiresStr) && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {[validOn, expiresStr].filter(Boolean).join(" · ")}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant={coupon.enabled ? "default" : "outline"}>
@@ -363,6 +527,9 @@ export default function AdminCouponsPage() {
                       minSubtotalCents: coupon.minSubtotalCents,
                       maxRedemptions: coupon.maxRedemptions,
                       maxRedemptionsPerCustomer: coupon.maxRedemptionsPerCustomer,
+                      includeProductIds: coupon.includeProductIds,
+                      includeCategoryTags: coupon.includeCategoryTags,
+                      expiresAt: coupon.expiresAt,
                       enabled: coupon.enabled,
                       stackable: coupon.stackable,
                     })}>
@@ -378,6 +545,7 @@ export default function AdminCouponsPage() {
                       <EditCouponForm
                         key={editingCoupon._id}
                         coupon={editingCoupon}
+                        products={products ?? []}
                         onSave={async (updates) => {
                           await updateCoupon({ couponId: coupon._id, ...updates });
                           setMessage("Coupon updated.");
@@ -392,33 +560,64 @@ export default function AdminCouponsPage() {
                   variant="outline"
                   size="sm"
                   className="text-destructive hover:bg-destructive/10"
-                  onClick={() => setDeleteConfirmId(coupon._id)}
+                  onClick={() => {
+                    setDeleteConfirmText("");
+                    setDeleteConfirmId(coupon._id);
+                  }}
                 >
                   Delete
                 </Button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </CardContent>
       </Card>
 
-      <AlertDialog open={deleteConfirmId !== null} onOpenChange={(open) => !open && setDeleteConfirmId(null)}>
+      <AlertDialog
+        open={deleteConfirmId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteConfirmId(null);
+            setDeleteConfirmText("");
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete coupon?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently remove the coupon. Carts with this coupon applied will need to re-enter a valid code.
+              This will permanently remove the coupon. Carts with this coupon applied will need to
+              re-enter a valid code. To confirm, type{" "}
+              <code className="rounded bg-muted px-1 font-mono text-sm">delete</code> below.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="delete-coupon-confirm" className="sr-only">
+              Type delete to confirm
+            </Label>
+            <Input
+              id="delete-coupon-confirm"
+              type="text"
+              placeholder="Type delete to confirm"
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              className="font-mono"
+              autoComplete="off"
+              autoCapitalize="off"
+            />
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteConfirmText !== "delete"}
               onClick={async () => {
-                if (deleteConfirmId) {
+                if (deleteConfirmId && deleteConfirmText === "delete") {
                   await deleteCoupon({ couponId: deleteConfirmId });
                   setMessage("Coupon deleted.");
                   setDeleteConfirmId(null);
+                  setDeleteConfirmText("");
                 }
               }}
             >

@@ -1,7 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
-import { requireRole } from "./lib/auth";
+import { getCurrentUserOrNull, requireRole } from "./lib/auth";
 
 export { computeCouponDiscount } from "./lib/couponLogic";
 
@@ -122,5 +122,77 @@ export const usageReport = query({
       count: redemptions.length,
       redemptions,
     };
+  },
+});
+
+/** Coupons issued to this user via email blast or direct. For "Available Rewards" on account page. */
+export const getAvailableRewardsForUser = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me?.email) return [];
+    const normalized = me.email.trim().toLowerCase();
+    const issuances = await ctx.db
+      .query("couponIssuances")
+      .withIndex("by_recipient", (q) => q.eq("recipientEmail", normalized))
+      .collect();
+    const rewards: Array<{
+      code: string;
+      type: string;
+      value: number;
+      minSubtotalCents?: number;
+      expiresAt?: number;
+      productNames?: string[];
+      includeCategoryTags?: string[];
+    }> = [];
+    const seen = new Set<string>();
+    for (const i of issuances) {
+      const c = await ctx.db.get(i.couponId);
+      if (!c || !c.enabled || seen.has(c.code)) continue;
+      if (c.expiresAt && c.expiresAt < Date.now()) continue;
+      seen.add(c.code);
+
+      let productNames: string[] | undefined;
+      if (c.includeProductIds && c.includeProductIds.length > 0) {
+        productNames = [];
+        for (const pid of c.includeProductIds) {
+          const p = await ctx.db.get(pid);
+          if (p) productNames.push(p.name);
+        }
+      }
+
+      rewards.push({
+        code: c.code,
+        type: c.type,
+        value: c.value,
+        minSubtotalCents: c.minSubtotalCents,
+        expiresAt: c.expiresAt,
+        productNames,
+        includeCategoryTags: c.includeCategoryTags ?? undefined,
+      });
+    }
+    return rewards;
+  },
+});
+
+/** Admin: issue a coupon to a customer by email (for Available Rewards). */
+export const issueCouponToCustomer = mutation({
+  args: {
+    couponId: v.id("coupons"),
+    recipientEmail: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await requireRole(ctx, "admin", "manager");
+    const coupon = await ctx.db.get(args.couponId);
+    if (!coupon || !coupon.enabled) throw new Error("Coupon not found or disabled");
+    const normalized = args.recipientEmail.trim().toLowerCase();
+    if (!normalized) throw new Error("Invalid email");
+    const now = Date.now();
+    await ctx.db.insert("couponIssuances", {
+      couponId: args.couponId,
+      recipientEmail: normalized,
+      source: "direct",
+      createdAt: now,
+    });
   },
 });

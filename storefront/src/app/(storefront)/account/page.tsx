@@ -16,7 +16,8 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { CUSTOMER_STATUS_LABELS } from "@/lib/orderStatusConfig";
-import { ChevronDown, ChevronRight, Package } from "lucide-react";
+import { PaymentMethodManager } from "@/components/PaymentMethodManager";
+import { ChevronDown, ChevronRight, Package, Sparkles } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,7 @@ export default function AccountPage() {
   const linkOrdersByEmail = useMutation(api.orders.linkOrdersByEmail);
   const shareBonusClaimed = useQuery(api.loyalty.getShareBonusClaimed);
   const claimShareBonus = useMutation(api.loyalty.claimShareBonus);
+  const availableRewards = useQuery(api.coupons.getAvailableRewardsForUser);
   const [shareError, setShareError] = useState<string | null>(null);
   const [sharePending, setSharePending] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -314,11 +316,20 @@ export default function AccountPage() {
                           {dollars(order.pricingSnapshot.totalCents)}
                         </span>
                       </div>
-                      <Button asChild variant="outline" size="sm" className="shrink-0 rounded-full">
-                        <Link href={`/orders/${order.guestToken}`}>
-                          View details
-                        </Link>
-                      </Button>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        {order.fulfillmentMode === "delivery" && order.status === "out_for_delivery" && (
+                          <Button asChild variant="default" size="sm" className="rounded-full">
+                            <Link href={`/orders/${order.guestToken}#delivery`}>
+                              Track delivery
+                            </Link>
+                          </Button>
+                        )}
+                        <Button asChild variant="outline" size="sm" className="rounded-full">
+                          <Link href={`/orders/${order.guestToken}`}>
+                            View details
+                          </Link>
+                        </Button>
+                      </div>
                     </div>
                   </li>
                 );
@@ -328,50 +339,101 @@ export default function AccountPage() {
         </CardContent>
       </Card>
 
-      <Collapsible defaultOpen={false}>
+      <PaymentMethodManager />
+
+      {availableRewards && availableRewards.length > 0 && (
         <Card>
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className="group flex w-full items-center justify-between p-6 text-left transition-colors hover:bg-muted/30 rounded-lg"
-            >
-              <div>
-                <CardTitle className="font-display text-xl text-brand-text">
-                  Earn Points
-                </CardTitle>
-                <CardDescription>
-                  Share and earn loyalty points
-                </CardDescription>
-              </div>
-              <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground group-data-[state=open]:hidden" />
-              <ChevronDown className="h-5 w-5 shrink-0 hidden text-muted-foreground group-data-[state=open]:block" />
-            </button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <CardContent className="space-y-6 pt-0">
-              {shareBonusClaimed === false && (
-                <div className="space-y-2 rounded-lg border p-4">
-                  <p className="font-medium">Share & Earn — {SHARE_BONUS_POINTS} points (one-time)</p>
-                  <p className="text-sm text-muted-foreground">
-                    Share TheTipsyCake with friends and claim your bonus.
-                  </p>
-                  {shareError && (
-                    <p className="text-sm text-destructive">{shareError}</p>
+          <CardHeader>
+            <CardTitle className="font-display text-xl text-brand-text">Available Rewards</CardTitle>
+            <CardDescription>
+              Coupons issued to you via email or by our team. Use at checkout.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {availableRewards.map((r) => (
+                <li
+                  key={r.code}
+                  className="flex flex-col gap-1 rounded-lg border px-3 py-2 text-sm"
+                >
+                  <div className="flex items-center justify-between">
+                    <code className="font-mono font-medium">{r.code}</code>
+                    <span className="text-muted-foreground">
+                      {r.type === "percent"
+                        ? `${r.value}% off`
+                        : r.type === "fixed"
+                          ? `$${(r.value / 100).toFixed(2)} off`
+                          : "Free delivery"}
+                      {r.minSubtotalCents ? ` (min $${(r.minSubtotalCents / 100).toFixed(2)})` : ""}
+                    </span>
+                  </div>
+                  {((r.productNames && r.productNames.length > 0) ||
+                    (r.includeCategoryTags && r.includeCategoryTags.length > 0)) && (
+                    <span className="text-xs text-muted-foreground">
+                      Valid on:{" "}
+                      {[
+                        ...(r.productNames ?? []),
+                        ...(r.includeCategoryTags ?? []).map((t) => `[${t}]`),
+                      ].join(", ")}
+                    </span>
                   )}
-                  <Button
-                    onClick={handleShareAndClaim}
-                    disabled={sharePending}
-                    size="sm"
-                    className="rounded-full bg-button text-stone-50 hover:bg-button-hover"
-                  >
-                    {sharePending ? "Sharing…" : "Share & claim 500 points"}
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </CollapsibleContent>
+                </li>
+              ))}
+            </ul>
+            <Button asChild variant="outline" size="sm" className="mt-4">
+              <Link href="/cart">Use in cart</Link>
+            </Button>
+          </CardContent>
         </Card>
-      </Collapsible>
+      )}
+
+      {/* Earn Points hidden for now */}
+      {false && (
+        <Collapsible defaultOpen={false}>
+          <Card>
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="group flex w-full items-center justify-between p-6 text-left transition-colors hover:bg-muted/30 rounded-lg"
+              >
+                <div>
+                  <CardTitle className="font-display text-xl text-brand-text">
+                    Earn Points
+                  </CardTitle>
+                  <CardDescription>
+                    Share and earn loyalty points
+                  </CardDescription>
+                </div>
+                <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground group-data-[state=open]:hidden" />
+                <ChevronDown className="h-5 w-5 shrink-0 hidden text-muted-foreground group-data-[state=open]:block" />
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="space-y-6 pt-0">
+                {shareBonusClaimed === false && (
+                  <div className="space-y-2 rounded-lg border p-4">
+                    <p className="font-medium">Share & Earn — {SHARE_BONUS_POINTS} points (one-time)</p>
+                    <p className="text-sm text-muted-foreground">
+                      Share TheTipsyCake with friends and claim your bonus.
+                    </p>
+                    {shareError && (
+                      <p className="text-sm text-destructive">{shareError}</p>
+                    )}
+                    <Button
+                      onClick={handleShareAndClaim}
+                      disabled={sharePending}
+                      size="sm"
+                      className="rounded-full bg-button text-stone-50 hover:bg-button-hover"
+                    >
+                      {sharePending ? "Sharing…" : "Share & claim 500 points"}
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+      )}
 
       {orders?.length === 0 && me && (
         <Card className="border-amber-200 bg-amber-50/30">
@@ -402,11 +464,18 @@ export default function AccountPage() {
         </Card>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        <Button asChild variant="outline" size="sm">
-          <Link href="/products">Browse Menu</Link>
+      <div className="flex flex-wrap gap-3">
+        <Button
+          asChild
+          size="lg"
+          className="rounded-full border border-gray-300 bg-brand-buttercup text-brand-text font-semibold shadow-lg hover:bg-brand-buttercup/90 hover:shadow-xl transition-all"
+        >
+          <Link href="/products" className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5" />
+            Browse our cakes
+          </Link>
         </Button>
-        <Button asChild size="sm">
+        <Button asChild size="sm" variant="outline">
           <Link href="/cart">View Cart</Link>
         </Button>
         <Button asChild variant="outline" size="sm">

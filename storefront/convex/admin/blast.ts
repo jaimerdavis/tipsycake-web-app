@@ -17,6 +17,8 @@ export const createBlast = action({
     lastOrderWithinDays: v.optional(v.number()),
     /** When set, send only to this email (test mode). Skips customer recipient logic. */
     testEmail: v.optional(v.string()),
+    /** When set, record coupon issuance for each recipient (for Available Rewards). */
+    couponId: v.optional(v.id("coupons")),
   },
   handler: async (ctx, args): Promise<Id<"emailBlasts">> => {
     const me = await ctx.runQuery(api.users.meOrNull, {});
@@ -68,6 +70,7 @@ export const createBlast = action({
       bodyHtml: args.bodyHtml.trim(),
       lastOrderWithinDays: args.lastOrderWithinDays,
       testEmails,
+      couponId: args.couponId,
     });
 
     return blastId;
@@ -158,6 +161,29 @@ export const listBlasts = query({
   },
 });
 
+/** Insert coupon issuances for blast recipients. Called by processBlastBatch. */
+export const insertCouponIssuancesForBatch = internalMutation({
+  args: {
+    couponId: v.id("coupons"),
+    blastId: v.id("emailBlasts"),
+    recipientEmails: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    for (const email of args.recipientEmails) {
+      const normalized = email.trim().toLowerCase();
+      if (!normalized) continue;
+      await ctx.db.insert("couponIssuances", {
+        couponId: args.couponId,
+        recipientEmail: normalized,
+        source: "email_blast",
+        blastId: args.blastId,
+        createdAt: now,
+      });
+    }
+  },
+});
+
 /** Process one batch of blast emails. Schedules next batch if needed. */
 export const processBlastBatch = internalAction({
   args: {
@@ -168,6 +194,8 @@ export const processBlastBatch = internalAction({
     lastOrderWithinDays: v.optional(v.number()),
     /** When set, send only to these emails (test mode). Skips customer query. */
     testEmails: v.optional(v.array(v.string())),
+    /** When set, record coupon issuance per recipient for Available Rewards. */
+    couponId: v.optional(v.id("coupons")),
   },
   handler: async (ctx, args) => {
     let emails: string[];
@@ -205,6 +233,14 @@ export const processBlastBatch = internalAction({
           template: "email_blast",
         });
         sent += 1;
+        if (args.couponId) {
+          await ctx.runMutation(internal.admin.blast.insertCouponIssuance, {
+            couponId: args.couponId,
+            recipientEmail: to.trim().toLowerCase(),
+            source: "email_blast",
+            blastId: args.blastId,
+          });
+        }
       } catch {
         // Logged by sendEmail; continue with batch
       }
@@ -231,9 +267,30 @@ export const processBlastBatch = internalAction({
           bodyHtml: args.bodyHtml,
           lastOrderWithinDays: args.lastOrderWithinDays,
           testEmails: args.testEmails,
+          couponId: args.couponId,
         }
       );
     }
+  },
+});
+
+/** Insert a single coupon issuance. Called by processBlastBatch per recipient. */
+export const insertCouponIssuance = internalMutation({
+  args: {
+    couponId: v.id("coupons"),
+    recipientEmail: v.string(),
+    source: v.union(v.literal("email_blast"), v.literal("direct")),
+    blastId: v.optional(v.id("emailBlasts")),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    await ctx.db.insert("couponIssuances", {
+      couponId: args.couponId,
+      recipientEmail: args.recipientEmail,
+      source: args.source,
+      blastId: args.blastId,
+      createdAt: now,
+    });
   },
 });
 

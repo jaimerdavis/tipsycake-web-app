@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { SignInButton, SignUpButton, UserButton, useAuth, useClerk } from "@clerk/nextjs";
+import { SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
+import { SignOutButton } from "@/components/SignOutButton";
 
 /**
  * Auth nav buttons (Sign in, Sign up, My Account, Sign out, UserButton).
@@ -12,7 +13,6 @@ import { Button } from "@/components/ui/button";
  */
 export function AuthNav() {
   const { isSignedIn } = useAuth();
-  const { signOut } = useClerk();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -22,14 +22,9 @@ export function AuthNav() {
         <Button asChild variant="ghost" size="sm" className="rounded-full">
           <Link href="/account">My Account</Link>
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="rounded-full text-muted-foreground hover:text-foreground"
-          onClick={() => void signOut()}
-        >
+        <SignOutButton className="inline-flex h-9 items-center justify-center rounded-full px-4 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
           Sign out
-        </Button>
+        </SignOutButton>
         {mounted && <UserButton appearance={{ variables: { colorPrimary: "#e92486" } }} />}
       </>
     );

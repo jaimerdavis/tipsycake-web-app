@@ -12,3 +12,9 @@ export const DEFAULT_SITE_URL = "https://order.tipsycake.com";
 
 /** Store lat/lng for distance calculation (Lauderhill FL). */
 export const STORE_ORIGIN = { lat: 26.139, lng: -80.216 };
+
+/** Delivery cutoff: beyond this distance, local delivery is not available (use shipping). Overridable via siteSettings.deliveryMaxMiles. */
+export const DELIVERY_MAX_MILES = 20;
+
+/** Shipping fee per cake in cents ($19 default). Applied when fulfillment = shipping. Overridable via siteSettings.shippingFeePerCakeCents. */
+export const SHIPPING_FEE_PER_CAKE_CENTS = 1900;

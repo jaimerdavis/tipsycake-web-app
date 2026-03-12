@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { startTransition, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { SignInButton, SignUpButton, useAuth, useClerk } from "@clerk/nextjs";
+import { SignInButton, SignUpButton, useAuth } from "@clerk/nextjs";
 
 import { AuthNav } from "@/components/AuthNav";
+import { SignOutButton } from "@/components/SignOutButton";
 import { BottomNav } from "@/components/BottomNav";
 import { ChatWidgetUniversal } from "@/components/ChatWidgetUniversal";
 import { Logo } from "@/components/Logo";
@@ -27,13 +28,13 @@ export default function StorefrontLayout({
 }) {
   const pathname = usePathname();
   const { isSignedIn } = useAuth();
-  const { signOut } = useClerk();
   const settings = useSiteSettings();
   const cartCount = useCartCount();
   const logoUrl = settings.get("logoUrl");
   const storeName = settings.get("storeName") || "TheTipsyCake";
   const faviconUrl = settings.get("faviconUrl");
   const storePhone = settings.get("storePhone")?.trim();
+  const chatEnabled = settings.get("chatEnabled") !== "false";
   const smsHref = storePhone ? `sms:${storePhone.replace(/\D/g, "").length === 10 ? `+1${storePhone.replace(/\D/g, "")}` : storePhone.replace(/\D/g, "")}` : null;
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -101,11 +102,6 @@ export default function StorefrontLayout({
           </nav>
 
           <div className="ml-auto flex hidden items-center gap-2 sm:flex">
-            {smsHref && (
-              <Button asChild variant="outline" size="sm" className="rounded-full">
-                <a href={smsHref}>Send us a text</a>
-              </Button>
-            )}
             {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && <AuthNav />}
             <Button asChild variant="ghost" size="sm" className="rounded-full">
               <Link href="/admin">Admin</Link>
@@ -148,14 +144,6 @@ export default function StorefrontLayout({
         {/* Mobile dropdown */}
         {mobileOpen && (
           <nav className="flex flex-col gap-3 border-t bg-background px-4 py-4 sm:hidden animate-fade-in">
-            {smsHref && (
-              <a
-                href={smsHref}
-                className="flex items-center justify-center rounded-full bg-button px-4 py-3 text-sm font-medium text-stone-50 hover:bg-button-hover"
-              >
-                Send us a text
-              </a>
-            )}
             {/* Account & Admin section (top) */}
             <div className="flex flex-col gap-1 rounded-lg bg-muted/50 px-2 py-2">
               {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY &&
@@ -171,13 +159,9 @@ export default function StorefrontLayout({
                     >
                       My Account
                     </Link>
-                    <button
-                      type="button"
-                      onClick={() => void signOut()}
-                      className="rounded-md px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                    >
+                    <SignOutButton className="w-full rounded-md px-3 py-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
                       Sign out
-                    </button>
+                    </SignOutButton>
                   </>
                 ) : (
                   <>
@@ -249,7 +233,7 @@ export default function StorefrontLayout({
         </div>
       </main>
 
-      <ChatWidgetUniversal />
+      {chatEnabled && <ChatWidgetUniversal />}
       <BottomNav />
     </div>
   );

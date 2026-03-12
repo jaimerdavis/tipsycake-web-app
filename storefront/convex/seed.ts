@@ -53,26 +53,91 @@ export const seedAvailabilityRules = mutation({
       createdAt: now,
     });
 
-    // Delivery within 10 miles only; same rules as pickup
+    // Delivery tiers: 0–3 mi $0, 3–10 mi $10, 10–15 mi $15, 15–21 mi $20. Beyond 20 mi → shipping only.
+    // Use maxMiles: 3 for first tier so 2.9 mi is included (condition is distanceMiles < maxMiles).
     await ctx.db.insert("deliveryTiers", {
       minMiles: 0,
-      maxMiles: 5,
+      maxMiles: 3,
       feeCents: 0,
       enabled: true,
       createdAt: now,
       updatedAt: now,
     });
-
     await ctx.db.insert("deliveryTiers", {
-      minMiles: 5,
+      minMiles: 3,
       maxMiles: 10,
-      feeCents: 500,
+      feeCents: 1000,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.insert("deliveryTiers", {
+      minMiles: 10,
+      maxMiles: 15,
+      feeCents: 1500,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.insert("deliveryTiers", {
+      minMiles: 15,
+      maxMiles: 21,
+      feeCents: 2000,
       enabled: true,
       createdAt: now,
       updatedAt: now,
     });
 
     return { seeded: true, message: "Availability rules and delivery tiers created" };
+  },
+});
+
+/**
+ * Seed delivery tiers when the table is empty. Run from Convex dashboard or CLI
+ * if local delivery pricing is not showing (e.g. seedAvailabilityRules was run
+ * before delivery tiers were added).
+ */
+export const seedDeliveryTiersIfEmpty = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const existing = await ctx.db.query("deliveryTiers").collect();
+    if (existing.length > 0) {
+      return { seeded: false, message: "Delivery tiers already exist. Edit via Admin > Scheduling." };
+    }
+    const now = Date.now();
+    await ctx.db.insert("deliveryTiers", {
+      minMiles: 0,
+      maxMiles: 3,
+      feeCents: 0,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.insert("deliveryTiers", {
+      minMiles: 3,
+      maxMiles: 10,
+      feeCents: 1000,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.insert("deliveryTiers", {
+      minMiles: 10,
+      maxMiles: 15,
+      feeCents: 1500,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.insert("deliveryTiers", {
+      minMiles: 15,
+      maxMiles: 21,
+      feeCents: 2000,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    return { seeded: true, message: "Delivery tiers created. Tune via Admin > Scheduling." };
   },
 });
 
@@ -241,10 +306,10 @@ export const seedModifiers = mutation({
     });
     optionsCreated++;
 
-    // Make It Extra Tipsy (optional, yes/no toggle)
+    // Make it Extra Tipsy (optional, yes/no toggle)
     const tipsyGroupId = await ctx.db.insert("modifierGroups", {
       productId: undefined,
-      name: "Make It Extra Tipsy",
+      name: "Make it Extra Tipsy",
       description: "Think of this as an extra shot of alcohol",
       required: false,
       minSelect: 0,
@@ -256,7 +321,7 @@ export const seedModifiers = mutation({
     groupsCreated++;
     await ctx.db.insert("modifierOptions", {
       groupId: tipsyGroupId,
-      name: "Make It Extra Tipsy",
+      name: "Make it Extra Tipsy",
       priceDeltaCents: 1000,
       sortOrder: 0,
       createdAt: now,

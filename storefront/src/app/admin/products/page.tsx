@@ -7,7 +7,7 @@ import type { Resolver } from "react-hook-form";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Pencil, Plus, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, X } from "lucide-react";
 
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -51,6 +51,7 @@ const productSchema = z.object({
   productCode: z.string().optional(),
   name: z.string().min(2),
   slug: z.string().min(2),
+  shortDescription: z.string().optional(),
   description: z.string().min(2),
   imagesCsv: z.string().optional(),
   categoriesCsv: z.string().optional(),
@@ -137,6 +138,7 @@ function EditProductSheet({
 
   // Badge toggles (synced from product when it loads)
   const [selectedBadges, setSelectedBadges] = useState<ProductBadgeType[]>([]);
+  const [editingVariantId, setEditingVariantId] = useState<Id<"productVariants"> | null>(null);
   const [editVariantLabel, setEditVariantLabel] = useState("");
   const [editVariantDelta, setEditVariantDelta] = useState("");
 
@@ -169,6 +171,7 @@ function EditProductSheet({
       productCode: product.productCode ?? "",
       name: product.name,
       slug: product.slug,
+      shortDescription: (product as { shortDescription?: string }).shortDescription ?? "",
       description: product.description,
       basePrice: product.basePriceCents / 100,
       status: product.status,
@@ -249,6 +252,7 @@ function EditProductSheet({
         productCode: String(fields.productCode || "").trim() || undefined,
         name: String(fields.name),
         slug: String(fields.slug),
+        shortDescription: String(fields.shortDescription || "").trim() || undefined,
         description: String(fields.description),
         images: parseCsv(String(fields.imagesCsv || "")),
         status: fields.status as "active" | "hidden",
@@ -503,7 +507,16 @@ function EditProductSheet({
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label>Description</Label>
+                    <Label>Short description (listing teaser ~4–8 words)</Label>
+                    <Input
+                      value={String(fields.shortDescription || "")}
+                      onChange={(e) => updateField("shortDescription", e.target.value)}
+                      placeholder="e.g. Delicate lychee with gin infusion"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Full description</Label>
                     <Textarea
                       value={String(fields.description)}
                       onChange={(e) => updateField("description", e.target.value)}
@@ -1243,6 +1256,9 @@ export default function AdminProductsPage() {
   const generateUploadUrl = useMutation(api.storage.generateUploadUrl);
 
   const [editingProductId, setEditingProductId] = useState<Id<"products"> | null>(null);
+  const [expandedProductIds, setExpandedProductIds] = useState<Set<string>>(new Set());
+  const [quickEditValues, setQuickEditValues] = useState<Record<string, { price: string; shortDescription: string; description: string }>>({});
+  const [quickSavingId, setQuickSavingId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [uploadedImageIds, setUploadedImageIds] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -1261,6 +1277,7 @@ export default function AdminProductsPage() {
       productCode: "",
       name: "",
       slug: "",
+      shortDescription: "",
       description: "",
       imagesCsv: "",
       categoriesCsv: "",
@@ -1309,6 +1326,7 @@ export default function AdminProductsPage() {
         productCode: values.productCode?.trim() || undefined,
         name: values.name,
         slug: values.slug,
+        shortDescription: values.shortDescription?.trim() || undefined,
         description: values.description,
         images: [...uploadedImageIds, ...manualImages],
         status: values.status,
@@ -1353,79 +1371,185 @@ export default function AdminProductsPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <CardTitle>Products</CardTitle>
-                <CardDescription>Click Edit to manage product details, variants, and modifiers</CardDescription>
+                <CardDescription>Expand to quick-edit price & description, or click Edit for full details</CardDescription>
               </div>
-              <Button variant="outline" size="sm" asChild className="w-fit shrink-0">
-                <Link href="/admin/products/images">Bulk edit images</Link>
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setExpandedProductIds(new Set(sortedProducts.map((p) => p._id)))}>
+                  Expand all
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setExpandedProductIds(new Set())}>
+                  Collapse all
+                </Button>
+                <Button variant="outline" size="sm" asChild>
+                  <Link href="/admin/products/images">Bulk edit images</Link>
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-3 p-4 sm:p-6 sm:pt-0">
-            {sortedProducts.map((product) => (
-              <div key={product._id} className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:gap-3">
-                <div className="flex min-w-0 items-center gap-3 sm:flex-1">
-                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded">
-                    <ProductImage
-                      images={product.images}
-                      name={product.name}
-                      className="h-full w-full object-cover"
-                    />
+            {sortedProducts.map((product) => {
+              const isExpanded = expandedProductIds.has(product._id);
+              const draft = quickEditValues[product._id] ?? {
+                price: centsToDollars(product.basePriceCents),
+                shortDescription: (product as { shortDescription?: string }).shortDescription ?? "",
+                description: product.description,
+              };
+              return (
+                <div key={product._id} className="flex flex-col gap-2 rounded-md border-[0.5px] border-dotted border-muted-foreground/30 p-2 shadow-[0_0.5px_2px_rgba(0,0,0,0.06)]">
+                  <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:gap-3">
+                    <div className="flex min-w-0 items-center gap-2 sm:flex-1">
+                      <button
+                        type="button"
+                        className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        onClick={() => {
+                          setExpandedProductIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(product._id)) next.delete(product._id);
+                            else next.add(product._id);
+                            return next;
+                          });
+                        }}
+                        aria-label={isExpanded ? "Collapse" : "Expand"}
+                      >
+                        {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      </button>
+                      <div className="h-10 w-10 shrink-0 overflow-hidden rounded">
+                        <ProductImage
+                          images={product.images}
+                          name={product.name}
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium truncate">
+                          {productDisplayName(product.name)}
+                          <span className="ml-2 text-xs text-muted-foreground font-normal">
+                            ${centsToDollars(product.basePriceCents)}
+                          </span>
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs sm:shrink-0">
+                      <Button
+                        size="sm"
+                        variant={product.status === "active" ? "default" : "outline"}
+                        className="min-w-[4.5rem]"
+                        onClick={async () => {
+                          await updateProduct({
+                            productId: product._id,
+                            status: product.status === "active" ? "hidden" : "active",
+                          });
+                        }}
+                      >
+                        {product.status === "active" ? "Active" : "Hidden"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={product.inStockToday ? "secondary" : "outline"}
+                        className="min-w-[5rem]"
+                        onClick={async () => {
+                          await updateProduct({
+                            productId: product._id,
+                            inStockToday: !product.inStockToday,
+                          });
+                        }}
+                      >
+                        {product.inStockToday ? "Available today" : "Future"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setEditingProductId(product._id)}
+                      >
+                        <Pencil className="mr-1 size-3.5" /> Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={async () => {
+                          await deleteProduct({ productId: product._id });
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </div>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium truncate">
-                      {productDisplayName(product.name)}
-                      <span className="ml-2 text-muted-foreground font-normal">
-                        ${centsToDollars(product.basePriceCents)}
-                      </span>
-                    </p>
-                  </div>
+                  {isExpanded && (
+                    <div className="flex flex-col gap-2 border-t border-dotted border-muted-foreground/20 pt-2">
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_2fr_auto] sm:items-end">
+                        <div className="space-y-1">
+                          <Label className="text-[11px]">Price ($)</Label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={draft.price}
+                            onChange={(e) =>
+                              setQuickEditValues((prev) => ({
+                                ...prev,
+                                [product._id]: { ...draft, price: e.target.value },
+                              }))
+                            }
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px]">Short (listing)</Label>
+                          <Input
+                            value={draft.shortDescription}
+                            onChange={(e) =>
+                              setQuickEditValues((prev) => ({
+                                ...prev,
+                                [product._id]: { ...draft, shortDescription: e.target.value },
+                              }))
+                            }
+                            placeholder="~4–8 words"
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[11px]">Full description</Label>
+                          <Textarea
+                            rows={2}
+                            value={draft.description}
+                            onChange={(e) =>
+                              setQuickEditValues((prev) => ({
+                                ...prev,
+                                [product._id]: { ...draft, description: e.target.value },
+                              }))
+                            }
+                            className="resize-none text-xs"
+                          />
+                        </div>
+                        <Button
+                          size="sm"
+                          disabled={quickSavingId === product._id}
+                          className="h-8 shrink-0"
+                          onClick={async () => {
+                            setQuickSavingId(product._id);
+                            try {
+                              await updateProduct({
+                                productId: product._id,
+                                basePriceCents: dollarsToCents(Number(draft.price) || 0),
+                                shortDescription: draft.shortDescription.trim() || undefined,
+                                description: draft.description.trim() || product.description,
+                              });
+                            setStatusMessage("Saved");
+                            setTimeout(() => setStatusMessage(null), 2000);
+                          } catch (err) {
+                            setStatusMessage(err instanceof Error ? err.message : "Save failed");
+                          } finally {
+                            setQuickSavingId(null);
+                          }
+                        }}
+                      >
+                        {quickSavingId === product._id ? "Saving…" : "Save"}
+                      </Button>
+                    </div>
+                    </div>
+                  )}
                 </div>
-                <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
-                  <Button
-                    size="sm"
-                    variant={product.status === "active" ? "default" : "outline"}
-                    className="min-w-[4.5rem]"
-                    onClick={async () => {
-                      await updateProduct({
-                        productId: product._id,
-                        status: product.status === "active" ? "hidden" : "active",
-                      });
-                    }}
-                  >
-                    {product.status === "active" ? "Active" : "Hidden"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={product.inStockToday ? "secondary" : "outline"}
-                    className="min-w-[5rem]"
-                    onClick={async () => {
-                      await updateProduct({
-                        productId: product._id,
-                        inStockToday: !product.inStockToday,
-                      });
-                    }}
-                  >
-                    {product.inStockToday ? "Available today" : "Future"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setEditingProductId(product._id)}
-                  >
-                    <Pencil className="mr-1 size-3.5" /> Edit
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={async () => {
-                      await deleteProduct({ productId: product._id });
-                    }}
-                  >
-                    Delete
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </CardContent>
         </Card>
 
@@ -1450,7 +1574,11 @@ export default function AdminProductsPage() {
                 <Input id="slug" {...productForm.register("slug")} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="description">Description</Label>
+                <Label htmlFor="shortDescription">Short description (listing teaser ~4–8 words)</Label>
+                <Input id="shortDescription" placeholder="Optional" {...productForm.register("shortDescription")} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="description">Full description</Label>
                 <Textarea id="description" {...productForm.register("description")} />
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

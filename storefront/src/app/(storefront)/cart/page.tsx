@@ -278,21 +278,41 @@ export default function CartPage() {
               <Label htmlFor="tip">Tip ($)</Label>
               <Input
                 id="tip"
-                type="number"
-                step="0.01"
+                type="text"
+                inputMode="decimal"
                 className="rounded-xl"
+                placeholder="0.00"
                 value={tipInput}
-                onChange={(event) => setTipInput(event.target.value)}
+                onChange={(event) => {
+                  const v = event.target.value;
+                  if (v === "") {
+                    setTipInput("");
+                    return;
+                  }
+                  if (/^\d*\.?\d{0,2}$/.test(v)) {
+                    setTipInput(v);
+                  }
+                }}
+                onBlur={() => {
+                  const parsed = parseFloat(tipInput);
+                  if (Number.isNaN(parsed) || parsed < 0) {
+                    setTipInput("0.00");
+                  } else {
+                    setTipInput(parsed.toFixed(2));
+                  }
+                }}
               />
             </div>
             <div className="flex gap-2">
               <Button
                 className="rounded-full bg-button text-stone-50 hover:bg-button-hover transition-all active:scale-[0.97]"
                 onClick={async () => {
+                  const cents = Math.max(0, Math.round((parseFloat(tipInput) || 0) * 100));
                   await setTip({
                     cartId: cart._id,
-                    amount: Math.round(Number(tipInput) * 100),
+                    amount: cents,
                   });
+                  setTipInput((cents / 100).toFixed(2));
                 }}
               >
                 Save tip
@@ -325,22 +345,20 @@ export default function CartPage() {
                 <span>Subtotal</span>
                 <span>${(totals.subtotalCents / 100).toFixed(2)}</span>
               </div>
+              <div className="flex justify-between">
+                <span>
+                  {cart.fulfillmentMode === "pickup"
+                    ? "Pickup"
+                    : "Delivery / Shipping"}
+                </span>
+                <span>
+                  {cart.fulfillmentMode === "pickup" ? "$0" : "TBD"}
+                </span>
+              </div>
               {totals.discountCents > 0 && (
                 <div className="flex justify-between text-green-600">
                   <span>Discount</span>
                   <span>-${(totals.discountCents / 100).toFixed(2)}</span>
-                </div>
-              )}
-              {totals.deliveryFeeCents > 0 && (
-                <div className="flex justify-between">
-                  <span>Delivery fee</span>
-                  <span>${(totals.deliveryFeeCents / 100).toFixed(2)}</span>
-                </div>
-              )}
-              {totals.shippingFeeCents > 0 && (
-                <div className="flex justify-between">
-                  <span>Shipping fee</span>
-                  <span>${(totals.shippingFeeCents / 100).toFixed(2)}</span>
                 </div>
               )}
               {totals.tipCents > 0 && (

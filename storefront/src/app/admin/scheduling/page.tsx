@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 
 import { api } from "../../../../convex/_generated/api";
 import { Badge } from "@/components/ui/badge";
@@ -17,8 +17,12 @@ function fmt(cents: number) {
 export default function AdminSchedulingPage() {
   const tiers = useQuery(api.checkout.listDeliveryTiers);
   const rules = useQuery(api.scheduling.adminGetEnabledRules);
+  const settings = useQuery(api.admin.settings.getAll);
   const upsertTier = useMutation(api.checkout.upsertDeliveryTier);
+  const deleteTier = useMutation(api.checkout.deleteDeliveryTier);
+  const testAddress = useAction(api.maps.testAddressForDelivery);
   const upsertRules = useMutation(api.scheduling.adminUpsertAvailabilityRules);
+  const setBatch = useMutation(api.admin.settings.setBatch);
 
   const [message, setMessage] = useState<string | null>(null);
   const [editingTierId, setEditingTierId] = useState<string | null>(null);
@@ -38,6 +42,21 @@ export default function AdminSchedulingPage() {
     slotTimes: "09:00\n10:00\n11:00\n12:00\n13:00\n14:00\n15:00\n16:00\n17:00",
     defaultMaxOrdersPerSlot: "3",
   });
+  const [deliveryConfigForm, setDeliveryConfigForm] = useState({
+    deliveryMaxMiles: "20",
+    shippingFeePerCakeCents: "1900",
+  });
+
+  useEffect(() => {
+    if (settings) {
+      setDeliveryConfigForm((prev) => ({
+        deliveryMaxMiles: settings.deliveryMaxMiles ?? prev.deliveryMaxMiles,
+        shippingFeePerCakeCents: settings.shippingFeePerCakeCents ?? prev.shippingFeePerCakeCents,
+      }));
+    }
+  }, [settings]);
+
+  const [savingConfig, setSavingConfig] = useState(false);
 
   useEffect(() => {
     if (rules) {
@@ -58,7 +77,27 @@ export default function AdminSchedulingPage() {
       }));
     }
   }, [rules]);
+
+  useEffect(() => {
+    if (settings) {
+      setDeliveryConfigForm((prev) => ({
+        deliveryMaxMiles: settings.deliveryMaxMiles ?? prev.deliveryMaxMiles,
+        shippingFeePerCakeCents: settings.shippingFeePerCakeCents ?? prev.shippingFeePerCakeCents,
+      }));
+    }
+  }, [settings]);
+
   const [savingTier, setSavingTier] = useState(false);
+  const [testAddressStr, setTestAddressStr] = useState("");
+  const [testResult, setTestResult] = useState<{
+    formattedAddress?: string;
+    distanceMiles?: number;
+    eligibleDelivery?: boolean;
+    tierFeeCents?: number | null;
+    tierLabel?: string | null;
+    error?: string;
+  } | null>(null);
+  const [testingAddress, setTestingAddress] = useState(false);
 
   function loadTierForEdit(tier: {
     _id: string;
@@ -90,6 +129,62 @@ export default function AdminSchedulingPage() {
         </p>
         {message && <Badge variant="secondary">{message}</Badge>}
       </header>
+
+      {/* ── Delivery & Shipping Config ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Delivery & Shipping Config</CardTitle>
+          <CardDescription>
+            Max delivery radius and shipping fee per cake. Beyond max miles, customers use shipping only.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="deliveryMaxMiles">Max delivery radius (miles)</Label>
+            <Input
+              id="deliveryMaxMiles"
+              type="number"
+              min={1}
+              max={100}
+              value={deliveryConfigForm.deliveryMaxMiles}
+              onChange={(e) =>
+                setDeliveryConfigForm((prev) => ({ ...prev, deliveryMaxMiles: e.target.value }))
+              }
+            />
+            <p className="text-xs text-muted-foreground">Beyond this distance, delivery is not available; customer must use shipping.</p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="shippingFeePerCakeCents">Shipping fee per cake (cents)</Label>
+            <Input
+              id="shippingFeePerCakeCents"
+              type="number"
+              min={0}
+              value={deliveryConfigForm.shippingFeePerCakeCents}
+              onChange={(e) =>
+                setDeliveryConfigForm((prev) => ({ ...prev, shippingFeePerCakeCents: e.target.value }))
+              }
+            />
+            <p className="text-xs text-muted-foreground">e.g. 1900 = $19 per cake. USA-wide.</p>
+          </div>
+          <Button
+            onClick={async () => {
+              try {
+                await setBatch({
+                  entries: [
+                    { key: "deliveryMaxMiles", value: String(Math.max(1, Number(deliveryConfigForm.deliveryMaxMiles) || 20)) },
+                    { key: "shippingFeePerCakeCents", value: String(Math.max(0, Number(deliveryConfigForm.shippingFeePerCakeCents) || 1900)) },
+                  ],
+                });
+                setMessage("Delivery & shipping config saved.");
+              } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Save failed");
+              }
+            }}
+          >
+            Save config
+          </Button>
+        </CardContent>
+      </Card>
 
       <section className="grid gap-4 lg:grid-cols-2">
         {/* ── Delivery Pricing Form ── */}
@@ -340,6 +435,75 @@ export default function AdminSchedulingPage() {
         </Card>
       </section>
 
+      {/* ── Test address ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Test address for delivery</CardTitle>
+          <CardDescription>
+            Paste an address to see distance from the shop, matching tier, and fee.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex gap-2">
+            <Input
+              placeholder="e.g. 123 Main St, Fort Lauderdale, FL 33301"
+              value={testAddressStr}
+              onChange={(e) => setTestAddressStr(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), document.getElementById("test-addr-btn")?.click())}
+            />
+            <Button
+              id="test-addr-btn"
+              disabled={!testAddressStr.trim() || testingAddress}
+              onClick={async () => {
+                setTestingAddress(true);
+                setTestResult(null);
+                try {
+                  const res = await testAddress({ addressStr: testAddressStr.trim() });
+                  setTestResult(res);
+                  if (res.error) setMessage(res.error);
+                } catch (err) {
+                  setTestResult({
+                    error: err instanceof Error ? err.message : "Test failed",
+                  });
+                } finally {
+                  setTestingAddress(false);
+                }
+              }}
+            >
+              {testingAddress ? "Testing…" : "Test"}
+            </Button>
+          </div>
+          {testResult && (
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+              {testResult.error ? (
+                <p className="text-destructive">{testResult.error}</p>
+              ) : (
+                <div className="space-y-1">
+                  {testResult.formattedAddress && (
+                    <p className="font-medium">{testResult.formattedAddress}</p>
+                  )}
+                  <p>
+                    Distance: <strong>{testResult.distanceMiles} mi</strong> from shop
+                  </p>
+                  <p>
+                    Eligible for delivery:{" "}
+                    <strong>{testResult.eligibleDelivery ? "Yes" : "No"}</strong>
+                  </p>
+                  {testResult.tierLabel && (
+                    <p>
+                      Tier: {testResult.tierLabel} → {fmt(testResult.tierFeeCents ?? 0)}
+                    </p>
+                  )}
+                  {testResult.eligibleDelivery && !testResult.tierLabel && (
+                    <p className="text-amber-600">No matching tier for this distance.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* ── Existing Zones ── */}
       <Card>
         <CardHeader>
@@ -375,6 +539,24 @@ export default function AdminSchedulingPage() {
                   }}
                 >
                   Edit
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (!confirm(`Delete ${tier.minMiles}–${tier.maxMiles} mi zone?`)) return;
+                    try {
+                      await deleteTier({ tierId: tier._id });
+                      setMessage("Zone deleted.");
+                      if (editingTierId === tier._id) resetTierForm();
+                    } catch (err) {
+                      setMessage(err instanceof Error ? err.message : "Delete failed");
+                    }
+                  }}
+                >
+                  Delete
                 </Button>
               </div>
             </div>

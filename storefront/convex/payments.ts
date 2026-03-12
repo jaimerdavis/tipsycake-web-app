@@ -4,6 +4,7 @@ import { action, internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import Stripe from "stripe";
 import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { REDEEM_POINTS_PER_DOLLAR } from "./lib/loyaltyConstants";
 
 interface CartItem {
@@ -47,12 +48,14 @@ export const createStripeSession = action({
     if (!cartData) throw new Error("Cart not found or access denied");
 
     const { cart, items } = cartData as { cart: CartForPayment; items: CartItem[] };
+    const cakeCount = items.reduce((s, i) => s + i.qty, 0);
     let deliveryFeeCents = 0;
     let shippingFeeCents = 0;
 
     if (cart.addressId && cart.fulfillmentMode) {
       const eligibility = await ctx.runQuery(api.checkout.getEligibility, {
         addressId: cart.addressId as never,
+        cakeCount,
       });
       if (cart.fulfillmentMode === "delivery") {
         deliveryFeeCents = eligibility.delivery.feeCents;
@@ -73,14 +76,44 @@ export const createStripeSession = action({
       });
       if (coupon) {
         const { computeCouponDiscount } = await import("./coupons");
-        couponDiscountCents = computeCouponDiscount({
-          coupon: {
-            type: coupon.type,
-            value: coupon.value,
-            minSubtotalCents: coupon.minSubtotalCents,
-          },
-          subtotalCents,
-        });
+        const hasProductFilters =
+          (coupon.includeProductIds?.length ?? 0) > 0 ||
+          (coupon.excludeProductIds?.length ?? 0) > 0 ||
+          (coupon.includeCategoryTags?.length ?? 0) > 0 ||
+          (coupon.excludeCategoryTags?.length ?? 0) > 0;
+        if (hasProductFilters) {
+          const productIds = [...new Set(items.map((i) => i.productId))];
+          const tagsMap = await ctx.runQuery(api.catalog.getTagsForProductIds, {
+            productIds: productIds as never[],
+          });
+          const getProductTags = (pid: string) => tagsMap[pid];
+          couponDiscountCents = computeCouponDiscount({
+            coupon: {
+              type: coupon.type,
+              value: coupon.value,
+              minSubtotalCents: coupon.minSubtotalCents,
+              includeProductIds: coupon.includeProductIds?.map(String),
+              includeCategoryTags: coupon.includeCategoryTags,
+              excludeProductIds: coupon.excludeProductIds?.map(String),
+              excludeCategoryTags: coupon.excludeCategoryTags,
+            },
+            items: items.map((i) => ({
+              productId: i.productId,
+              unitPriceSnapshotCents: i.unitPriceSnapshotCents,
+              qty: i.qty,
+            })),
+            getProductTags,
+          });
+        } else {
+          couponDiscountCents = computeCouponDiscount({
+            coupon: {
+              type: coupon.type,
+              value: coupon.value,
+              minSubtotalCents: coupon.minSubtotalCents,
+            },
+            subtotalCents,
+          });
+        }
       }
     }
 
@@ -117,11 +150,13 @@ export const createStripeSession = action({
     }
 
     if (shippingFeeCents > 0) {
+      const cakeCount = items.reduce((s, i) => s + i.qty, 0);
+      const label = cakeCount > 1 ? `Shipping (${cakeCount} cakes × $${(shippingFeeCents / cakeCount / 100).toFixed(0)})` : "Shipping";
       lineItems.push({
         quantity: 1,
         price_data: {
           currency: "usd",
-          product_data: { name: "Shipping fee" },
+          product_data: { name: label },
           unit_amount: shippingFeeCents,
         },
       });
@@ -182,15 +217,27 @@ export const createPaymentIntent = action({
     });
     if (!cartData) throw new Error("Cart not found or access denied");
 
-    const { cart, items } = cartData as { cart: CartForPayment; items: CartItem[] };
+    const {
+      cart,
+      items,
+      ownerUserId,
+      ownerStripeCustomerId,
+    } = cartData as {
+      cart: CartForPayment;
+      items: CartItem[];
+      ownerUserId?: Id<"users">;
+      ownerStripeCustomerId?: string;
+    };
     if (items.length === 0) throw new Error("Cart is empty");
 
+    const cakeCount = items.reduce((s, i) => s + i.qty, 0);
     let deliveryFeeCents = 0;
     let shippingFeeCents = 0;
 
     if (cart.addressId && cart.fulfillmentMode) {
       const eligibility = await ctx.runQuery(api.checkout.getEligibility, {
         addressId: cart.addressId as never,
+        cakeCount,
       });
       if (cart.fulfillmentMode === "delivery") {
         deliveryFeeCents = eligibility.delivery.feeCents;
@@ -211,14 +258,44 @@ export const createPaymentIntent = action({
       });
       if (coupon) {
         const { computeCouponDiscount } = await import("./coupons");
-        couponDiscountCents = computeCouponDiscount({
-          coupon: {
-            type: coupon.type,
-            value: coupon.value,
-            minSubtotalCents: coupon.minSubtotalCents,
-          },
-          subtotalCents,
-        });
+        const hasProductFilters =
+          (coupon.includeProductIds?.length ?? 0) > 0 ||
+          (coupon.excludeProductIds?.length ?? 0) > 0 ||
+          (coupon.includeCategoryTags?.length ?? 0) > 0 ||
+          (coupon.excludeCategoryTags?.length ?? 0) > 0;
+        if (hasProductFilters) {
+          const productIds = [...new Set(items.map((i) => i.productId))];
+          const tagsMap = await ctx.runQuery(api.catalog.getTagsForProductIds, {
+            productIds: productIds as never[],
+          });
+          const getProductTags = (pid: string) => tagsMap[pid];
+          couponDiscountCents = computeCouponDiscount({
+            coupon: {
+              type: coupon.type,
+              value: coupon.value,
+              minSubtotalCents: coupon.minSubtotalCents,
+              includeProductIds: coupon.includeProductIds?.map(String),
+              includeCategoryTags: coupon.includeCategoryTags,
+              excludeProductIds: coupon.excludeProductIds?.map(String),
+              excludeCategoryTags: coupon.excludeCategoryTags,
+            },
+            items: items.map((i) => ({
+              productId: i.productId,
+              unitPriceSnapshotCents: i.unitPriceSnapshotCents,
+              qty: i.qty,
+            })),
+            getProductTags,
+          });
+        } else {
+          couponDiscountCents = computeCouponDiscount({
+            coupon: {
+              type: coupon.type,
+              value: coupon.value,
+              minSubtotalCents: coupon.minSubtotalCents,
+            },
+            subtotalCents,
+          });
+        }
       }
     }
 
@@ -236,15 +313,46 @@ export const createPaymentIntent = action({
         (cart.tipCents ?? 0)
     );
 
+    let stripeCustomerId: string | undefined;
+    if (ownerUserId) {
+      if (ownerStripeCustomerId) {
+        stripeCustomerId = ownerStripeCustomerId;
+      } else {
+        const userDoc = await ctx.runQuery(internal.users.getUserForStripeCustomer, {
+          userId: ownerUserId,
+        });
+        if (userDoc) {
+          const stripe = new Stripe(stripeSecret);
+          const customer = await stripe.customers.create({
+            email: userDoc.email,
+            name: userDoc.name,
+            metadata: { convexUserId: String(ownerUserId) },
+          });
+          stripeCustomerId = customer.id;
+          await ctx.runMutation(internal.users.setStripeCustomerId, {
+            userId: ownerUserId,
+            stripeCustomerId: customer.id,
+          });
+        }
+      }
+    }
+
     const stripe = new Stripe(stripeSecret);
-    const paymentIntent = await stripe.paymentIntents.create({
+    const paymentIntentParams: Stripe.PaymentIntentCreateParams = {
       amount: totalCents,
       currency: "usd",
       automatic_payment_methods: { enabled: true },
       metadata: {
         cartId: String(args.cartId),
       },
-    });
+    };
+
+    if (stripeCustomerId) {
+      paymentIntentParams.customer = stripeCustomerId;
+      paymentIntentParams.setup_future_usage = "off_session";
+    }
+
+    const paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
 
     await ctx.runMutation(api.paymentLogs.recordPaymentAttempt, {
       cartId: args.cartId,
@@ -256,6 +364,212 @@ export const createPaymentIntent = action({
       clientSecret: paymentIntent.client_secret!,
       amount: totalCents,
     };
+  },
+});
+
+/** Get or create Stripe Customer for current user. Returns stripeCustomerId or null. */
+async function getOrCreateStripeCustomerForUser(
+  ctx: { runQuery: (fn: never, args: Record<string, never>) => Promise<{ _id: Id<"users">; email: string; name: string; stripeCustomerId?: string } | null>; runMutation: (fn: never, args: { userId: Id<"users">; stripeCustomerId: string }) => Promise<never> },
+  stripeSecret: string
+): Promise<string | null> {
+  const me = await ctx.runQuery(api.users.meOrNull, {});
+  if (!me) return null;
+
+  if (me.stripeCustomerId) return me.stripeCustomerId;
+
+  const stripe = new Stripe(stripeSecret);
+  const customer = await stripe.customers.create({
+    email: me.email,
+    name: me.name,
+    metadata: { convexUserId: String(me._id) },
+  });
+  await ctx.runMutation(internal.users.setStripeCustomerId, {
+    userId: me._id,
+    stripeCustomerId: customer.id,
+  });
+  return customer.id;
+}
+
+/** List saved payment methods for the current user. */
+export const listPaymentMethods = action({
+  args: {},
+  handler: async (ctx) => {
+    const stripeSecret = requireEnv("STRIPE_SECRET_KEY");
+    const stripeCustomerId = await getOrCreateStripeCustomerForUser(ctx, stripeSecret);
+    if (!stripeCustomerId) return [];
+
+    const stripe = new Stripe(stripeSecret);
+    const { data } = await stripe.paymentMethods.list({
+      customer: stripeCustomerId,
+      type: "card",
+    });
+
+    return data.map((pm) => ({
+      id: pm.id,
+      brand: pm.card?.brand ?? "card",
+      last4: pm.card?.last4 ?? "····",
+      expMonth: pm.card?.exp_month ?? 0,
+      expYear: pm.card?.exp_year ?? 0,
+    }));
+  },
+});
+
+/** Create SetupIntent for adding a new payment method. Returns clientSecret for Stripe Elements. */
+export const createSetupIntent = action({
+  args: {},
+  handler: async (ctx) => {
+    const stripeSecret = requireEnv("STRIPE_SECRET_KEY");
+    const stripeCustomerId = await getOrCreateStripeCustomerForUser(ctx, stripeSecret);
+    if (!stripeCustomerId) throw new Error("Sign in to add a payment method");
+
+    const stripe = new Stripe(stripeSecret);
+    const si = await stripe.setupIntents.create({
+      customer: stripeCustomerId,
+      payment_method_types: ["card"],
+      usage: "off_session",
+    });
+
+    return { clientSecret: si.client_secret! };
+  },
+});
+
+/** Detach (remove) a payment method. Verifies it belongs to the current user's customer. */
+export const detachPaymentMethod = action({
+  args: { paymentMethodId: v.string() },
+  handler: async (ctx, args) => {
+    const stripeSecret = requireEnv("STRIPE_SECRET_KEY");
+    const stripeCustomerId = await getOrCreateStripeCustomerForUser(ctx, stripeSecret);
+    if (!stripeCustomerId) throw new Error("Sign in to manage payment methods");
+
+    const stripe = new Stripe(stripeSecret);
+    const pm = await stripe.paymentMethods.retrieve(args.paymentMethodId);
+    if (pm.customer !== stripeCustomerId) {
+      throw new Error("Payment method not found");
+    }
+    await stripe.paymentMethods.detach(args.paymentMethodId);
+  },
+});
+
+/** Admin: list payment methods for a customer by email. Includes PaymentMethods (pm_*) and legacy card sources (card_*). */
+export const listPaymentMethodsForCustomer = action({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    const me = await ctx.runQuery(api.users.meOrNull, {});
+    if (!me || (me.role !== "admin" && me.role !== "manager")) {
+      throw new Error("Unauthorized");
+    }
+    const stripeSecret = requireEnv("STRIPE_SECRET_KEY");
+    const user = await ctx.runQuery(internal.users.getUserByEmailForMigration, {
+      email: args.email.trim().toLowerCase(),
+    });
+    if (!user) return [];
+    const stripeUser = await ctx.runQuery(internal.users.getStripeCustomerIdForUser, { userId: user.userId });
+    if (!stripeUser?.stripeCustomerId) return [];
+
+    const cusId = stripeUser.stripeCustomerId;
+    if (!cusId.startsWith("cus_")) {
+      return [];
+    }
+
+    const stripe = new Stripe(stripeSecret);
+
+    // Modern PaymentMethods (pm_xxx)
+    const { data: pmData } = await stripe.paymentMethods.list({
+      customer: cusId,
+      type: "card",
+    });
+    const fromPm = pmData.map((pm) => ({
+      id: pm.id,
+      brand: pm.card?.brand ?? "card",
+      last4: pm.card?.last4 ?? "····",
+      expMonth: pm.card?.exp_month ?? 0,
+      expYear: pm.card?.exp_year ?? 0,
+    }));
+
+    // Legacy card sources (card_xxx) from WooCommerce or older Stripe integrations
+    let fromSources: Array<{ id: string; brand: string; last4: string; expMonth: number; expYear: number }> = [];
+    try {
+      const sources = await stripe.customers.listSources(cusId, { limit: 100 });
+      const pmIds = new Set(fromPm.map((p) => p.id));
+      for (const src of sources.data) {
+        if (src.object === "card" && src.id && !pmIds.has(src.id)) {
+          fromSources.push({
+            id: src.id,
+            brand: src.brand ?? "card",
+            last4: src.last4 ?? "····",
+            expMonth: src.exp_month ?? 0,
+            expYear: src.exp_year ?? 0,
+          });
+        }
+      }
+    } catch {
+      // listSources can fail for some accounts; ignore and return PaymentMethods only
+    }
+
+    return [...fromPm, ...fromSources];
+  },
+});
+
+/** Admin: retry linking Stripe customer ID for a customer by email. Use when payment methods don't show (e.g. 4 accounts that didn't get linked by migration). */
+export const retryStripeLinkForCustomer = action({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    const me = await ctx.runQuery(api.users.meOrNull, {});
+    if (!me || (me.role !== "admin" && me.role !== "manager")) {
+      throw new Error("Unauthorized");
+    }
+    const normalized = args.email.trim().toLowerCase();
+    if (!normalized) return { ok: false, reason: "Email required" };
+
+    const user = await ctx.runQuery(internal.users.getUserByEmailForMigration, { email: normalized });
+    if (!user) return { ok: false, reason: "Customer not found" };
+
+    const existing = await ctx.runQuery(internal.users.getStripeCustomerIdForUser, { userId: user.userId });
+    if (existing?.stripeCustomerId) return { ok: true, linked: false, reason: "Already linked" };
+
+    const stripeSecret = process.env.STRIPE_SECRET_KEY;
+    if (!stripeSecret) return { ok: false, reason: "STRIPE_SECRET_KEY not set" };
+
+    const stripe = new Stripe(stripeSecret);
+    const list = await stripe.customers.list({ email: normalized, limit: 1 });
+    if (list.data.length === 0) return { ok: true, linked: false, reason: "No Stripe customer with that email" };
+
+    await ctx.runMutation(internal.users.setStripeCustomerId, {
+      userId: user.userId,
+      stripeCustomerId: list.data[0].id,
+    });
+    return { ok: true, linked: true, stripeCustomerId: list.data[0].id };
+  },
+});
+
+/** Admin: detach a payment method for a customer by email. Handles both PaymentMethods (pm_*) and legacy card sources (card_*). */
+export const detachPaymentMethodForCustomer = action({
+  args: { email: v.string(), paymentMethodId: v.string() },
+  handler: async (ctx, args) => {
+    const me = await ctx.runQuery(api.users.meOrNull, {});
+    if (!me || (me.role !== "admin" && me.role !== "manager")) {
+      throw new Error("Unauthorized");
+    }
+    const stripeSecret = requireEnv("STRIPE_SECRET_KEY");
+    const user = await ctx.runQuery(internal.users.getUserByEmailForMigration, {
+      email: args.email.trim().toLowerCase(),
+    });
+    if (!user) throw new Error("Customer not found");
+    const stripeUser = await ctx.runQuery(internal.users.getStripeCustomerIdForUser, { userId: user.userId });
+    if (!stripeUser?.stripeCustomerId) throw new Error("No payment methods on file");
+
+    const stripe = new Stripe(stripeSecret);
+    const id = args.paymentMethodId;
+
+    if (id.startsWith("card_")) {
+      await stripe.customers.deleteSource(stripeUser.stripeCustomerId, id);
+    } else {
+      const pm = await stripe.paymentMethods.retrieve(id);
+      if (pm.customer !== stripeUser.stripeCustomerId) {
+        throw new Error("Payment method not found for this customer");
+      }
+      await stripe.paymentMethods.detach(id);
+    }
   },
 });
 
@@ -281,12 +595,13 @@ export const createPayPalOrder = action({
 
     const { cart, items } = cartData as { cart: CartForPayment; items: CartItem[] };
     if (items.length === 0) throw new Error("Cart is empty");
-
+    const cakeCount = items.reduce((s, i) => s + i.qty, 0);
     let deliveryFeeCents = 0;
     let shippingFeeCents = 0;
     if (cart.addressId && cart.fulfillmentMode) {
       const eligibility = await ctx.runQuery(api.checkout.getEligibility, {
         addressId: cart.addressId as never,
+        cakeCount,
       });
       if (cart.fulfillmentMode === "delivery") {
         deliveryFeeCents = eligibility.delivery.feeCents;
@@ -307,14 +622,44 @@ export const createPayPalOrder = action({
       });
       if (coupon) {
         const { computeCouponDiscount } = await import("./coupons");
-        couponDiscountCents = computeCouponDiscount({
-          coupon: {
-            type: coupon.type,
-            value: coupon.value,
-            minSubtotalCents: coupon.minSubtotalCents,
-          },
-          subtotalCents,
-        });
+        const hasProductFilters =
+          (coupon.includeProductIds?.length ?? 0) > 0 ||
+          (coupon.excludeProductIds?.length ?? 0) > 0 ||
+          (coupon.includeCategoryTags?.length ?? 0) > 0 ||
+          (coupon.excludeCategoryTags?.length ?? 0) > 0;
+        if (hasProductFilters) {
+          const productIds = [...new Set(items.map((i) => i.productId))];
+          const tagsMap = await ctx.runQuery(api.catalog.getTagsForProductIds, {
+            productIds: productIds as never[],
+          });
+          const getProductTags = (pid: string) => tagsMap[pid];
+          couponDiscountCents = computeCouponDiscount({
+            coupon: {
+              type: coupon.type,
+              value: coupon.value,
+              minSubtotalCents: coupon.minSubtotalCents,
+              includeProductIds: coupon.includeProductIds?.map(String),
+              includeCategoryTags: coupon.includeCategoryTags,
+              excludeProductIds: coupon.excludeProductIds?.map(String),
+              excludeCategoryTags: coupon.excludeCategoryTags,
+            },
+            items: items.map((i) => ({
+              productId: i.productId,
+              unitPriceSnapshotCents: i.unitPriceSnapshotCents,
+              qty: i.qty,
+            })),
+            getProductTags,
+          });
+        } else {
+          couponDiscountCents = computeCouponDiscount({
+            coupon: {
+              type: coupon.type,
+              value: coupon.value,
+              minSubtotalCents: coupon.minSubtotalCents,
+            },
+            subtotalCents,
+          });
+        }
       }
     }
 

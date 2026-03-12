@@ -4,7 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 
 import { computePricingSnapshot, computeUnitPriceCents } from "./lib/pricing";
-import { computeCouponDiscount } from "./coupons";
+import { computeCouponDiscount } from "./lib/couponLogic";
 import { REDEEM_POINTS_PER_DOLLAR } from "./lib/loyaltyConstants";
 import { isValidUSPhone, normalizePhoneToE164 } from "./lib/phoneUtils";
 
@@ -159,6 +159,19 @@ export const getCartForPayment = query({
       }
     }
 
+    let ownerUserId: Id<"users"> | undefined;
+    let ownerStripeCustomerId: string | undefined;
+    if (cart.ownerType === "user") {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_token", (q) => q.eq("tokenIdentifier", cart.ownerId))
+        .unique();
+      if (user) {
+        ownerUserId = user._id;
+        ownerStripeCustomerId = user.stripeCustomerId;
+      }
+    }
+
     return {
       cart,
       items: items.map((item) => {
@@ -169,6 +182,8 @@ export const getCartForPayment = query({
           productImages: cached?.images ?? [],
         };
       }),
+      ownerUserId,
+      ownerStripeCustomerId,
     };
   },
 });
@@ -199,18 +214,60 @@ export const getActive = query({
     if (cart.appliedCouponId) {
       const coupon = await ctx.db.get(cart.appliedCouponId as Id<"coupons">);
       if (coupon && coupon.enabled && (!coupon.expiresAt || coupon.expiresAt > Date.now())) {
-        const subtotalCents = items.reduce(
-          (sum, item) => sum + item.unitPriceSnapshotCents * item.qty,
-          0
-        );
-        couponDiscountCents = computeCouponDiscount({
-          coupon: {
-            type: coupon.type,
-            value: coupon.value,
-            minSubtotalCents: coupon.minSubtotalCents,
-          },
-          subtotalCents,
-        });
+        const hasProductFilters =
+          (coupon.includeProductIds?.length ?? 0) > 0 ||
+          (coupon.excludeProductIds?.length ?? 0) > 0 ||
+          (coupon.includeCategoryTags?.length ?? 0) > 0 ||
+          (coupon.excludeCategoryTags?.length ?? 0) > 0;
+
+        if (hasProductFilters) {
+          const productCache = new Map<
+            string,
+            { categories: string[]; tags: string[] }
+          >();
+          for (const item of items) {
+            if (!productCache.has(item.productId as string)) {
+              const p = await ctx.db.get(item.productId);
+              productCache.set(item.productId as string, {
+                categories: p?.categories ?? [],
+                tags: p?.tags ?? [],
+              });
+            }
+          }
+          const getProductTags = (productId: string) =>
+            productCache.get(productId);
+
+          couponDiscountCents = computeCouponDiscount({
+            coupon: {
+              type: coupon.type,
+              value: coupon.value,
+              minSubtotalCents: coupon.minSubtotalCents,
+              includeProductIds: coupon.includeProductIds?.map(String),
+              includeCategoryTags: coupon.includeCategoryTags,
+              excludeProductIds: coupon.excludeProductIds?.map(String),
+              excludeCategoryTags: coupon.excludeCategoryTags,
+            },
+            items: items.map((item) => ({
+              productId: item.productId as string,
+              unitPriceSnapshotCents: item.unitPriceSnapshotCents,
+              qty: item.qty,
+            })),
+            getProductTags,
+          });
+        } else {
+          const subtotalCents = items.reduce(
+            (sum, item) => sum + item.unitPriceSnapshotCents * item.qty,
+            0
+          );
+          couponDiscountCents = computeCouponDiscount({
+            coupon: {
+              type: coupon.type,
+              value: coupon.value,
+              minSubtotalCents: coupon.minSubtotalCents,
+            },
+            subtotalCents,
+          });
+        }
       }
     }
 
@@ -444,14 +501,9 @@ export const applyCoupon = mutation({
       .query("cartItems")
       .withIndex("by_cart", (q) => q.eq("cartId", args.cartId))
       .collect();
-    const subtotalCents = items.reduce(
-      (sum, item) => sum + item.unitPriceSnapshotCents * item.qty,
-      0
-    );
 
-    if (coupon.minSubtotalCents && subtotalCents < coupon.minSubtotalCents) {
-      throw new Error(`Minimum subtotal is ${coupon.minSubtotalCents} cents`);
-    }
+    // minSubtotalCents is enforced at discount computation time, not at apply.
+    // Allow apply regardless of cart contents; discount=0 until eligible items added.
 
     const totalRedemptions = await ctx.db
       .query("couponRedemptions")

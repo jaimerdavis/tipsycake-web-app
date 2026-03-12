@@ -84,3 +84,20 @@ export const getProduct = query({
     };
   },
 });
+
+/** Return categories and tags for product IDs. Used for coupon product-filter discount computation. */
+export const getTagsForProductIds = query({
+  args: { productIds: v.array(v.id("products")) },
+  handler: async (ctx, args) => {
+    const result: Record<string, { categories: string[]; tags: string[] }> = {};
+    const seen = new Set<string>();
+    for (const id of args.productIds) {
+      const key = id as string;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const p = await ctx.db.get(id);
+      if (p) result[key] = { categories: p.categories, tags: p.tags };
+    }
+    return result;
+  },
+});

@@ -65,7 +65,7 @@ export function AddressAutocomplete({
     if (!inputRef.current || !window.google?.maps?.places) return;
 
     const ac = new window.google.maps.places.Autocomplete(inputRef.current, {
-      types: ["address"],
+      // Omit types to include both addresses and establishments (business names)
       componentRestrictions: { country: "us" },
       fields: [
         "formatted_address",
@@ -135,7 +135,7 @@ export function AddressAutocomplete({
     <Input
       ref={inputRef}
       placeholder={placeholder}
-      autoComplete="street-address"
+      autoComplete="off"
     />
   );
 }

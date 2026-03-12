@@ -417,8 +417,8 @@ export function ProductImageGallery({
         </div>
       </div>
 
-      {/* ── Desktop grid — hidden below sm ── */}
-      <div className="hidden sm:grid sm:grid-cols-2 sm:gap-3 md:grid-cols-3">
+      {/* ── Desktop grid — 2x2 on tablet, 4 across on large screens ── */}
+      <div className="hidden sm:grid sm:grid-cols-2 sm:gap-3 lg:grid-cols-4">
         {displayImages.map((img, i) => (
           <button
             key={i}

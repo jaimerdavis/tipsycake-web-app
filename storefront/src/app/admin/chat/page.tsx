@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 export default function AdminChatPage() {
   const [selectedId, setSelectedId] = useState<Id<"chatConversations"> | null>(null);
@@ -27,6 +29,11 @@ export default function AdminChatPage() {
 
   const sendMessage = useMutation(api.chat.sendMessage);
   const closeConversation = useMutation(api.chat.closeConversation);
+  const settings = useQuery(api.admin.settings.getAll);
+  const setSetting = useMutation(api.admin.settings.set);
+
+  const chatEnabled = settings?.chatEnabled !== "false";
+  const setChatEnabled = (enabled: boolean) => setSetting({ key: "chatEnabled", value: enabled ? "true" : "false" });
 
   const selected = selectedId ? conversations?.find((c) => c._id === selectedId) : null;
 
@@ -53,11 +60,25 @@ export default function AdminChatPage() {
 
   return (
     <div className="flex flex-col gap-6 px-4 py-6 sm:px-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Live Chat</h1>
-        <p className="text-sm text-muted-foreground">
-          Reply to customer messages from the order page or any storefront page.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Live Chat</h1>
+          <p className="text-sm text-muted-foreground">
+            Reply to customer messages from the order page or any storefront page.
+          </p>
+        </div>
+        <Card className="shrink-0">
+          <CardContent className="flex items-center gap-3 pt-6">
+            <Switch
+              id="chat-enabled"
+              checked={chatEnabled}
+              onCheckedChange={setChatEnabled}
+            />
+            <Label htmlFor="chat-enabled" className="cursor-pointer text-sm font-medium">
+              Show chat button on storefront
+            </Label>
+          </CardContent>
+        </Card>
       </header>
 
       <div className="grid gap-4 lg:grid-cols-[320px_1fr]">

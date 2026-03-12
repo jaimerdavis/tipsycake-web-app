@@ -5,6 +5,47 @@ import { v } from "convex/values";
 import { api } from "./_generated/api";
 import { STORE_ORIGIN } from "./lib/storeConfig";
 
+function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3959;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * Get driving distance from store to address via Google Distance Matrix API.
+ * Returns null on API failure; caller should fall back to haversine.
+ */
+async function getDrivingDistanceMiles(
+  destLat: number,
+  destLng: number,
+  apiKey: string
+): Promise<number | null> {
+  const origin = `${STORE_ORIGIN.lat},${STORE_ORIGIN.lng}`;
+  const dest = `${destLat},${destLng}`;
+  const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(dest)}&mode=driving&key=${apiKey}`;
+  const res = await fetch(url);
+  const data = (await res.json()) as {
+    status: string;
+    rows?: Array<{
+      elements?: Array<{
+        status: string;
+        distance?: { value: number };
+      }>;
+    }>;
+  };
+  if (data.status !== "OK" || !data.rows?.[0]?.elements?.[0]) return null;
+  const el = data.rows[0].elements[0];
+  if (el.status !== "OK" || el.distance == null) return null;
+  return Math.round((el.distance.value / 1609.344) * 10) / 10; // meters to miles
+}
+
 /**
  * Normalize and geocode an address using external API.
  * FUL-006: Integrates with Google Places/Geocoding when API key is configured.
@@ -126,16 +167,12 @@ export const computeDistanceAndZone = action({
     const lat: number = address.lat;
     const lng: number = address.lng;
 
-    const R = 3959; // Earth radius miles
-    const dLat: number = ((lat - STORE_ORIGIN.lat) * Math.PI) / 180;
-    const dLng: number = ((lng - STORE_ORIGIN.lng) * Math.PI) / 180;
-    const a: number =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos((STORE_ORIGIN.lat * Math.PI) / 180) *
-        Math.cos((lat * Math.PI) / 180) *
-        Math.sin(dLng / 2) ** 2;
-    const c: number = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const distanceMiles: number = R * c;
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    const drivingMiles = apiKey
+      ? await getDrivingDistanceMiles(lat, lng, apiKey)
+      : null;
+    const distanceMiles: number =
+      drivingMiles ?? haversineMiles(lat, lng, STORE_ORIGIN.lat, STORE_ORIGIN.lng);
 
     interface DeliveryZone {
       _id: string;
@@ -143,6 +180,7 @@ export const computeDistanceAndZone = action({
       polygonGeoJson?: { coordinates?: number[][][] };
     }
     const zones = (await ctx.runQuery(api.addresses.listDeliveryZones, {})) as DeliveryZone[];
+    const { deliveryMaxMiles } = await ctx.runQuery(api.checkout.getDeliveryConfigQuery, {});
 
     let zoneId: string | null = null;
     const x = lng;
@@ -168,15 +206,79 @@ export const computeDistanceAndZone = action({
       }
     }
 
+    const eligibleDelivery = distanceMiles <= deliveryMaxMiles;
+    // When no polygon zones exist, base eligibility on distance only. When zones exist, require at least one enabled.
+    const eligibleByZone = zones.length === 0 || zones.some((z: DeliveryZone) => z.enabled);
     await ctx.runMutation(api.addresses.upsertAddressCache, {
       addressId: args.addressId,
       distanceMiles,
       zoneId: (zoneId ?? undefined) as never,
-      eligibleDelivery: zones.some((z: DeliveryZone) => z.enabled) && distanceMiles <= 10,
+      eligibleDelivery: eligibleByZone && eligibleDelivery,
       eligibleShipping: true,
       computedAt: Date.now(),
     });
 
-    return { distanceMiles, zoneId, eligibleDelivery: distanceMiles <= 10, eligibleShipping: true };
+    return { distanceMiles, zoneId, eligibleDelivery, eligibleShipping: true };
+  },
+});
+
+/**
+ * Test an address for delivery: geocode, compute distance from store, find matching tier.
+ * Admin-only. Use on the delivery pricing page to verify tier configuration.
+ */
+export const testAddressForDelivery = action({
+  args: {
+    addressStr: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+      return {
+        error: "GOOGLE_MAPS_API_KEY not configured",
+        distanceMiles: null,
+        eligibleDelivery: null,
+        tierFeeCents: null,
+        tierLabel: null,
+      };
+    }
+
+    const enc = encodeURIComponent(args.addressStr.trim());
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${enc}&key=${apiKey}`;
+    const res = await fetch(url);
+    const data = (await res.json()) as {
+      status: string;
+      results?: Array<{ geometry: { location: { lat: number; lng: number } }; formatted_address: string }>;
+    };
+
+    if (data.status !== "OK" || !data.results?.length) {
+      return {
+        error: data.status === "ZERO_RESULTS" ? "Address not found" : "Geocoding failed",
+        distanceMiles: null,
+        eligibleDelivery: null,
+        tierFeeCents: null,
+        tierLabel: null,
+      };
+    }
+
+    const loc = data.results[0].geometry.location;
+    const drivingMiles = await getDrivingDistanceMiles(loc.lat, loc.lng, apiKey);
+    const distanceMiles =
+      drivingMiles ?? Math.round(haversineMiles(loc.lat, loc.lng, STORE_ORIGIN.lat, STORE_ORIGIN.lng) * 10) / 10;
+
+    const { deliveryMaxMiles } = await ctx.runQuery(api.checkout.getDeliveryConfigQuery, {});
+    const tiers = await ctx.runQuery(api.checkout.listDeliveryTiers, {});
+    const enabledTiers = tiers.filter((t) => t.enabled);
+    const tier = enabledTiers.find(
+      (t) => distanceMiles >= t.minMiles && distanceMiles < t.maxMiles
+    );
+
+    return {
+      error: null,
+      formattedAddress: data.results[0].formatted_address,
+      distanceMiles,
+      eligibleDelivery: distanceMiles <= deliveryMaxMiles,
+      tierFeeCents: tier?.feeCents ?? null,
+      tierLabel: tier ? `${tier.minMiles}–${tier.maxMiles} mi` : null,
+    };
   },
 });

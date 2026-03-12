@@ -1,12 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import type { Id } from "../../../../convex/_generated/dataModel";
 
 import { api } from "../../../../convex/_generated/api";
-import { FulfillmentBar } from "@/components/FulfillmentBar";
 import { ProductImage } from "@/components/ProductImage";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
 import { ProductBadges } from "@/components/ProductBadge";
@@ -15,10 +14,12 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getOrCreateGuestSessionId } from "@/lib/guestSession";
-import {
-  getPreferredFulfillment,
-  type FulfillmentMode,
-} from "@/lib/fulfillmentPreference";
+
+function truncateToWords(text: string, maxWords: number): string {
+  const words = text.trim().split(/\s+/);
+  if (words.length <= maxWords) return text;
+  return words.slice(0, maxWords).join(" ");
+}
 
 export default function ProductsPage() {
   const [guestSessionId, setGuestSessionId] = useState("");
@@ -35,7 +36,6 @@ export default function ProductsPage() {
     guestSessionId ? { guestSessionId } : "skip"
   );
   const updateItem = useMutation(api.cart.updateItem);
-  const setFulfillment = useMutation(api.checkout.setFulfillment);
 
   const settings = useSiteSettings();
   const menuTextUs = settings.get("contentMenuTextUs")?.trim() ?? "";
@@ -43,7 +43,8 @@ export default function ProductsPage() {
   const smsHref = storePhone
     ? `sms:${storePhone.replace(/\D/g, "").length === 10 ? `+1${storePhone.replace(/\D/g, "")}` : storePhone.replace(/\D/g, "")}`
     : null;
-  const showTextUsBlock = menuTextUs.length > 0;
+  const showTextUsBlock = !!smsHref;
+  const textUsLabel = menuTextUs || "Questions? Click here to send us a Text";
 
   const { qtyByProduct, cartItemIdByProduct } = useMemo(() => {
     const qtyBy: Record<string, number> = {};
@@ -60,22 +61,6 @@ export default function ProductsPage() {
   const hasCartItems = (cart?.items?.length ?? 0) > 0;
   const cartTotalCents = cart?.pricing?.totalCents ?? 0;
 
-  const [storedMode, setStoredMode] = useState<FulfillmentMode | null>(() =>
-    getPreferredFulfillment()
-  );
-  const currentMode: FulfillmentMode | null =
-    cart?.fulfillmentMode ?? storedMode ?? null;
-
-  const handleSelect = useCallback(
-    async (mode: FulfillmentMode) => {
-      setStoredMode(mode);
-      if (mode === "pickup" && cart?._id) {
-        await setFulfillment({ cartId: cart._id, mode: "pickup" });
-      }
-    },
-    [cart?._id, setFulfillment]
-  );
-
   if (!products) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-rose-100/70 via-stone-50/80 to-white p-6 pb-safe">
@@ -87,16 +72,7 @@ export default function ProductsPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-rose-100/70 via-stone-50/80 to-white pb-28 sm:pb-safe">
       <div className="mx-auto flex max-w-6xl flex-col gap-4 px-3 py-4 sm:gap-6 sm:px-6 sm:py-6">
-        {/* Fulfillment selector bar — compact, not full width on desktop */}
-        <div className="w-full sm:mx-auto sm:max-w-sm">
-          <FulfillmentBar
-            cartId={cart?._id ?? null}
-            currentMode={currentMode}
-            onSelect={handleSelect}
-          />
-        </div>
-
-        <section className="grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+        <section className="relative z-0 grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-4 lg:grid-cols-2">
           {(products ?? []).map((product, i) => {
             const qty = qtyByProduct[product._id as string] ?? 0;
             const cartItemId = cartItemIdByProduct[product._id as string];
@@ -105,14 +81,30 @@ export default function ProductsPage() {
               <Card
                 key={product._id}
                 className={cn(
-                  "group flex h-full flex-col overflow-hidden rounded-xl bg-white shadow-md transition-all duration-200 active:scale-[0.98] sm:rounded-2xl",
+                  "group flex h-full flex-col overflow-hidden rounded-lg bg-gradient-to-b from-amber-50/90 via-rose-50/80 to-stone-100/90 shadow-[0_6px_20px_rgba(0,0,0,0.05)] transition-all duration-200 active:scale-[0.98] sm:rounded-xl",
                   `animate-scale-in stagger-${Math.min(i + 1, 6)}`
                 )}
               >
                 <Link href={`/products/${product._id}`} className="flex flex-1 flex-col">
-                    <div className="relative p-3 sm:p-4">
-                    <ProductBadges badges={(product as { badges?: string[] }).badges} className="absolute left-4 top-4 z-10" />
-                    <div className="relative aspect-[4/3] overflow-hidden rounded-lg bg-gradient-to-br from-rose-100/50 via-stone-100/90 to-amber-100/30 p-2 sm:p-3">
+                  <CardHeader className="p-3 pb-1 pt-3 sm:p-4 sm:pt-4 sm:pb-2">
+                    <CardTitle className="font-display text-lg font-bold text-amber-950 line-clamp-1 sm:text-xl lg:text-[1.35rem]">
+                      {productDisplayName(product.name)}
+                    </CardTitle>
+                    {(() => {
+                      const p = product as { description?: string; shortDescription?: string };
+                      const teaser = p.shortDescription?.trim()
+                        || (p.description ? truncateToWords(p.description, 8) : "");
+                      if (!teaser) return null;
+                      return (
+                        <p className="mt-0.5 text-[11px] text-muted-foreground sm:text-xs">
+                          {teaser}
+                        </p>
+                      );
+                    })()}
+                  </CardHeader>
+                    <div className="relative p-3 pt-1 sm:p-4 sm:pt-2">
+                    <ProductBadges badges={(product as { badges?: string[] }).badges} size="sm" className="absolute left-1 top-1 z-10" />
+                    <div className="relative aspect-[4/3] overflow-hidden rounded-md bg-gradient-to-br from-rose-100/50 via-stone-100/90 to-amber-100/30 p-2 sm:p-3">
                       <ProductImage
                       images={product.images}
                       name={product.name}
@@ -123,11 +115,6 @@ export default function ProductsPage() {
                     />
                     </div>
                   </div>
-                  <CardHeader className="flex-1 p-3 pb-2 pt-2 sm:p-4 sm:pt-4 sm:pb-2">
-                    <CardTitle className="font-display text-base font-bold text-stone-900 line-clamp-2 sm:text-xl lg:text-2xl">
-                      {productDisplayName(product.name)}
-                    </CardTitle>
-                  </CardHeader>
                 </Link>
 
                 <div className="flex items-center justify-between gap-2 p-3 pt-2 sm:p-4 sm:pt-3">
@@ -172,7 +159,7 @@ export default function ProductsPage() {
                     <Button
                       asChild
                       size="sm"
-                      className="h-8 rounded-full bg-brand px-4 text-white shadow-[inset_0_1px_2px_rgba(0,0,0,0.08),inset_0_-2px_4px_rgba(0,0,0,0.18)] hover:bg-brand-hover"
+                      className="h-6 rounded-full bg-brand px-2.5 text-xs text-white shadow-[inset_0_1px_2px_rgba(0,0,0,0.08),inset_0_-2px_4px_rgba(0,0,0,0.18)] hover:bg-brand-hover"
                     >
                       <Link href={`/products/${product._id}`}>+ Add</Link>
                     </Button>
@@ -189,19 +176,12 @@ export default function ProductsPage() {
           </p>
         )}
 
-        {showTextUsBlock && (
-          <p className="pt-6 text-center">
-            {smsHref ? (
-              <a
-                href={smsHref}
-                className="text-sm font-medium text-brand-text underline-offset-4 hover:underline"
-              >
-                {menuTextUs}
-              </a>
-            ) : (
-              <span className="text-sm font-medium text-stone-600">{menuTextUs}</span>
-            )}
-          </p>
+        {showTextUsBlock && smsHref && (
+          <div className="flex justify-center pt-6">
+            <Button asChild variant="outline" size="sm" className="rounded-full shadow-sm">
+              <a href={smsHref}>{textUsLabel}</a>
+            </Button>
+          </div>
         )}
       </div>
 

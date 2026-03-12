@@ -46,17 +46,24 @@ const BADGE_CONFIG: Record<
 export function ProductBadge({
   badge,
   className,
+  size = "default",
 }: {
   badge: ProductBadgeType;
   className?: string;
+  size?: "default" | "sm";
 }) {
   const config = BADGE_CONFIG[badge];
   if (!config) return null;
+  const sizeClasses =
+    size === "sm"
+      ? "px-2 py-0.5 text-[9px]"
+      : "px-3 py-1 text-[11px]";
 
   return (
     <span
       className={cn(
-        "relative inline-flex items-center rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wider",
+        "relative inline-flex items-center rounded-full font-bold uppercase tracking-wider",
+        sizeClasses,
         "after:pointer-events-none after:absolute after:inset-0 after:rounded-full after:bg-gradient-to-r after:from-transparent after:via-white/25 after:to-transparent after:bg-[length:200%_100%] after:animate-badge-shimmer",
         config.className,
         className
@@ -73,9 +80,11 @@ const VALID_BADGES: ProductBadgeType[] = ["popular", "new_flavor", "best_seller"
 export function ProductBadges({
   badges,
   className,
+  size = "default",
 }: {
   badges?: string[];
   className?: string;
+  size?: "default" | "sm";
 }) {
   const valid = badges?.filter((b): b is ProductBadgeType =>
     VALID_BADGES.includes(b as ProductBadgeType)
@@ -85,7 +94,7 @@ export function ProductBadges({
   return (
     <div className={cn("flex flex-wrap gap-1.5", className)}>
       {valid.map((b) => (
-        <ProductBadge key={b} badge={b} />
+        <ProductBadge key={b} badge={b} size={size} />
       ))}
     </div>
   );

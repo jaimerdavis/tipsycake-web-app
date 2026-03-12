@@ -198,7 +198,7 @@ export function ChatWidgetUniversal() {
             <h3 className="font-semibold">Message us</h3>
             <p className="text-xs text-muted-foreground">
               {isGuestOrderFlow
-                ? "Questions about your order? Type below and send."
+                ? "Type a message..."
                 : !conversationId && !isAuthenticated
                   ? "Enter your details below to start a conversation."
                   : "Have a question? Type your message below and click Send to start."}

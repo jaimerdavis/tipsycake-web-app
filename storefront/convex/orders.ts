@@ -7,6 +7,7 @@ import { internal } from "./_generated/api";
 import { getCurrentUser } from "./lib/auth";
 import { computePricingSnapshot } from "./lib/pricing";
 import { computeCouponDiscount } from "./coupons";
+import { computeFeesForOrder } from "./lib/deliveryFees";
 import {
   renderOrderConfirmation,
   renderOwnerNotification,
@@ -147,14 +148,56 @@ async function finalizeFromPaymentEvent(
         }
       }
 
-      couponDiscountCents = computeCouponDiscount({
-        coupon: {
-          type: coupon.type,
-          value: coupon.value,
-          minSubtotalCents: coupon.minSubtotalCents,
-        },
-        subtotalCents,
-      });
+      const hasProductFilters =
+        (coupon.includeProductIds?.length ?? 0) > 0 ||
+        (coupon.excludeProductIds?.length ?? 0) > 0 ||
+        (coupon.includeCategoryTags?.length ?? 0) > 0 ||
+        (coupon.excludeCategoryTags?.length ?? 0) > 0;
+
+      if (hasProductFilters) {
+        const productCache = new Map<
+          string,
+          { categories: string[]; tags: string[] }
+        >();
+        for (const item of cartItems) {
+          if (!productCache.has(item.productId as string)) {
+            const p = await ctx.db.get(item.productId);
+            productCache.set(item.productId as string, {
+              categories: p?.categories ?? [],
+              tags: p?.tags ?? [],
+            });
+          }
+        }
+        const getProductTags = (productId: string) =>
+          productCache.get(productId);
+
+        couponDiscountCents = computeCouponDiscount({
+          coupon: {
+            type: coupon.type,
+            value: coupon.value,
+            minSubtotalCents: coupon.minSubtotalCents,
+            includeProductIds: coupon.includeProductIds?.map(String),
+            includeCategoryTags: coupon.includeCategoryTags,
+            excludeProductIds: coupon.excludeProductIds?.map(String),
+            excludeCategoryTags: coupon.excludeCategoryTags,
+          },
+          items: cartItems.map((item) => ({
+            productId: item.productId as string,
+            unitPriceSnapshotCents: item.unitPriceSnapshotCents,
+            qty: item.qty,
+          })),
+          getProductTags,
+        });
+      } else {
+        couponDiscountCents = computeCouponDiscount({
+          coupon: {
+            type: coupon.type,
+            value: coupon.value,
+            minSubtotalCents: coupon.minSubtotalCents,
+          },
+          subtotalCents,
+        });
+      }
       couponIdForRedemption = coupon._id as unknown as string;
     }
   }
@@ -174,24 +217,28 @@ async function finalizeFromPaymentEvent(
     }
   }
 
-    const pricingSnapshot = computePricingSnapshot({
-      items: items.map((item) => ({
-        unitPriceSnapshotCents: item.unitPriceSnapshotCents,
-        qty: item.qty,
-      })),
-      couponDiscountCents,
-      loyaltyDiscountCents,
-      deliveryFeeCents: 0,
-      shippingFeeCents: 0,
-      tipCents: cart.tipCents,
-      taxCents: 0,
-    });
+  const cakeCount = items.reduce((s, i) => s + i.qty, 0);
+  const { deliveryFeeCents, shippingFeeCents } = await computeFeesForOrder(
+    ctx,
+    cart.addressId as Id<"addresses"> | undefined,
+    cart.fulfillmentMode ?? undefined,
+    cakeCount
+  );
 
-    if (pricingSnapshot.totalCents > 0) {
-      throw new Error("Order total must be $0 to complete as free order");
-    }
+  const pricingSnapshot = computePricingSnapshot({
+    items: items.map((item) => ({
+      unitPriceSnapshotCents: item.unitPriceSnapshotCents,
+      qty: item.qty,
+    })),
+    couponDiscountCents,
+    loyaltyDiscountCents,
+    deliveryFeeCents,
+    shippingFeeCents,
+    tipCents: cart.tipCents,
+    taxCents: 0,
+  });
 
-    const orderId = await ctx.db.insert("orders", {
+  const orderId = await ctx.db.insert("orders", {
     orderNumber: randomOrderNumber(),
     cartId: params.cartId as never,
     userId: userId ? (userId as never) : undefined,
@@ -527,6 +574,47 @@ export const completeFreeOrder = mutation({
             }
           }
         }
+        const hasProductFilters =
+          (coupon.includeProductIds?.length ?? 0) > 0 ||
+          (coupon.excludeProductIds?.length ?? 0) > 0 ||
+          (coupon.includeCategoryTags?.length ?? 0) > 0 ||
+          (coupon.excludeCategoryTags?.length ?? 0) > 0;
+
+        if (hasProductFilters) {
+          const productCache = new Map<
+            string,
+            { categories: string[]; tags: string[] }
+          >();
+          for (const item of cartItems) {
+            if (!productCache.has(item.productId as string)) {
+              const p = await ctx.db.get(item.productId);
+              productCache.set(item.productId as string, {
+                categories: p?.categories ?? [],
+                tags: p?.tags ?? [],
+              });
+            }
+          }
+          const getProductTags = (productId: string) =>
+            productCache.get(productId);
+
+          couponDiscountCents = computeCouponDiscount({
+            coupon: {
+              type: coupon.type,
+              value: coupon.value,
+              minSubtotalCents: coupon.minSubtotalCents,
+              includeProductIds: coupon.includeProductIds?.map(String),
+              includeCategoryTags: coupon.includeCategoryTags,
+              excludeProductIds: coupon.excludeProductIds?.map(String),
+              excludeCategoryTags: coupon.excludeCategoryTags,
+            },
+            items: cartItems.map((item) => ({
+            productId: item.productId as string,
+            unitPriceSnapshotCents: item.unitPriceSnapshotCents,
+            qty: item.qty,
+          })),
+          getProductTags,
+        });
+      } else {
         couponDiscountCents = computeCouponDiscount({
           coupon: {
             type: coupon.type,
@@ -535,18 +623,19 @@ export const completeFreeOrder = mutation({
           },
           subtotalCents,
         });
-        couponIdForRedemption = coupon._id as unknown as string;
       }
+      couponIdForRedemption = coupon._id as unknown as string;
     }
+  }
 
-    let loyaltyDiscountCents = 0;
-    let loyaltyPointsRedeemed = 0;
-    let loyaltyAccountId: string | undefined;
-    if (cart.appliedLoyaltyPoints && cart.appliedLoyaltyPoints > 0 && userId) {
-      const account = await ctx.db
-        .query("loyaltyAccounts")
-        .withIndex("by_user", (q) => q.eq("userId", userId as never))
-        .unique();
+  let loyaltyDiscountCents = 0;
+  let loyaltyPointsRedeemed = 0;
+  let loyaltyAccountId: string | undefined;
+  if (cart.appliedLoyaltyPoints && cart.appliedLoyaltyPoints > 0 && userId) {
+    const account = await ctx.db
+      .query("loyaltyAccounts")
+      .withIndex("by_user", (q) => q.eq("userId", userId as never))
+      .unique();
       if (account) {
         loyaltyAccountId = account._id as unknown as string;
         loyaltyPointsRedeemed = Math.min(account.pointsBalance, cart.appliedLoyaltyPoints);

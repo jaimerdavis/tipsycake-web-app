@@ -192,9 +192,10 @@ export default function EmailBlastPage() {
 
     try {
       let couponCode: string | null = null;
+      let couponId: string | undefined;
 
       if (couponMode === "new") {
-        await createCoupon({
+        const newId = await createCoupon({
           code: newCouponForm.code,
           type: newCouponForm.type,
           value:
@@ -211,10 +212,12 @@ export default function EmailBlastPage() {
           enabled: newCouponForm.enabled,
         });
         couponCode = newCouponForm.code.trim().toUpperCase();
+        couponId = newId;
         setNewCouponForm(defaultNewCouponForm);
       } else if (couponMode === "existing") {
         const c = coupons?.find((x) => x._id === existingCouponId);
         couponCode = c?.code ?? null;
+        couponId = existingCouponId && existingCouponId !== "none" ? existingCouponId : undefined;
       }
 
       let finalBody = bodyHtml.trim();
@@ -230,6 +233,7 @@ export default function EmailBlastPage() {
             ? lastOrderWithinDays
             : undefined,
         testEmail: blastMode === "test" ? testEmail.trim() : undefined,
+        couponId: couponId as never,
       });
 
       const recipientLabel =

@@ -878,3 +878,125 @@ export const backfillAddressesFromCsv = mutation({
     return { ok: true, updated, totalInCsv: emailToAddr.size };
   },
 });
+
+/**
+ * Create Convex user records (not Clerk) for historical order contacts.
+ * Uses tokenIdentifier = "import:user@example.com" as placeholder.
+ * When the real person signs in via Clerk, storeUser's "link by email" logic
+ * finds this user and patches tokenIdentifier — no duplicate created.
+ *
+ * Run BEFORE backfillAddressesToAccounts and linkAllGuestOrdersToUsers.
+ *
+ * Run: npx convex run importHistoricalOrders:importUsersFromOrders
+ */
+export const importUsersFromOrders = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await requireRole(ctx, "admin");
+
+    const orders = await ctx.db.query("orders").collect();
+    const emailToName = new Map<string, string>();
+    for (const o of orders) {
+      const email = o.contactEmail?.trim()?.toLowerCase();
+      if (!email) continue;
+      const name = o.contactName?.trim();
+      if (name && (!emailToName.has(email) || (emailToName.get(email)?.length ?? 0) < name.length)) {
+        emailToName.set(email, name);
+      } else if (!emailToName.has(email)) {
+        emailToName.set(email, "Customer");
+      }
+    }
+
+    const existingUsers = await ctx.db.query("users").collect();
+    const existingEmails = new Set(
+      existingUsers.map((u) => u.email?.trim()?.toLowerCase()).filter(Boolean)
+    );
+
+    const now = Date.now();
+    let created = 0;
+    let skipped = 0;
+
+    for (const [email, name] of emailToName) {
+      if (existingEmails.has(email)) {
+        skipped++;
+        continue;
+      }
+      await ctx.db.insert("users", {
+        tokenIdentifier: `import:${email}`,
+        email,
+        name,
+        role: "customer",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+      created++;
+      existingEmails.add(email);
+    }
+
+    return {
+      ok: true,
+      created,
+      skipped,
+      totalUnique: emailToName.size,
+    };
+  },
+});
+
+/**
+ * Assign historical-import addresses to accounts.
+ * - If a user exists with matching contactEmail: set ownerId = user.tokenIdentifier (shows in their saved addresses when signed in)
+ * - Otherwise: set ownerId = "email:user@example.com" (guests see these when cart.contactEmail matches)
+ *
+ * Run AFTER importUsersFromOrders. Run: npx convex run importHistoricalOrders:backfillAddressesToAccounts
+ */
+export const backfillAddressesToAccounts = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await requireRole(ctx, "admin");
+
+    const orders = await ctx.db
+      .query("orders")
+      .filter((q) =>
+        q.and(
+          q.neq(q.field("addressId"), undefined),
+          q.neq(q.field("contactEmail"), undefined)
+        )
+      )
+      .collect();
+
+    const users = await ctx.db.query("users").collect();
+    const emailToUser = new Map(
+      users.map((u) => [u.email.trim().toLowerCase(), u])
+    );
+
+    let linkedToUser = 0;
+    let linkedToEmail = 0;
+    const seenAddressIds = new Set<string>();
+
+    for (const order of orders) {
+      const email = order.contactEmail?.trim()?.toLowerCase();
+      if (!email || !order.addressId) continue;
+
+      const addr = await ctx.db.get(order.addressId);
+      if (!addr) continue;
+      if (addr.ownerId !== "historical-import") continue;
+      if (seenAddressIds.has(order.addressId)) continue;
+
+      seenAddressIds.add(order.addressId);
+      const user = emailToUser.get(email);
+      const newOwnerId = user ? user.tokenIdentifier : `email:${email}`;
+      if (user) linkedToUser++;
+      else linkedToEmail++;
+
+      await ctx.db.patch(order.addressId, { ownerId: newOwnerId });
+    }
+
+    return {
+      ok: true,
+      linkedToUser,
+      linkedToEmail,
+      totalProcessed: linkedToUser + linkedToEmail,
+    };
+  },
+});

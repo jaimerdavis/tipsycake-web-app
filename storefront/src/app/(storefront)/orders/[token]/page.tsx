@@ -84,7 +84,7 @@ export default function OrderStatusByTokenPage() {
       </Card>
 
       {order.fulfillmentMode === "delivery" && deliveryTracking && (
-        <Card className="rounded-2xl">
+        <Card id="delivery" className="rounded-2xl scroll-mt-6">
           <CardHeader>
             <CardTitle className="font-display text-2xl text-brand-text">Delivery Tracking</CardTitle>
             <CardDescription>
@@ -158,9 +158,6 @@ export default function OrderStatusByTokenPage() {
         </CardContent>
       </Card>
 
-      <p className="text-center text-sm text-muted-foreground">
-        Questions about your order? Use the <strong>Chat</strong> button to reach us.
-      </p>
     </main>
   );
 }
