@@ -159,12 +159,13 @@ async function finalizeFromPaymentEvent(
           string,
           { categories: string[]; tags: string[] }
         >();
-        for (const item of cartItems) {
+        for (const item of items) {
           if (!productCache.has(item.productId as string)) {
-            const p = await ctx.db.get(item.productId);
+            const p = await ctx.db.get(item.productId as Id<"products">);
+            const prod = p as { categories?: string[]; tags?: string[] } | null;
             productCache.set(item.productId as string, {
-              categories: p?.categories ?? [],
-              tags: p?.tags ?? [],
+              categories: prod?.categories ?? [],
+              tags: prod?.tags ?? [],
             });
           }
         }
@@ -181,7 +182,7 @@ async function finalizeFromPaymentEvent(
             excludeProductIds: coupon.excludeProductIds?.map(String),
             excludeCategoryTags: coupon.excludeCategoryTags,
           },
-          items: cartItems.map((item) => ({
+          items: items.map((item) => ({
             productId: item.productId as string,
             unitPriceSnapshotCents: item.unitPriceSnapshotCents,
             qty: item.qty,
@@ -580,34 +581,35 @@ export const completeFreeOrder = mutation({
           (coupon.includeCategoryTags?.length ?? 0) > 0 ||
           (coupon.excludeCategoryTags?.length ?? 0) > 0;
 
-        if (hasProductFilters) {
-          const productCache = new Map<
-            string,
-            { categories: string[]; tags: string[] }
-          >();
-          for (const item of cartItems) {
-            if (!productCache.has(item.productId as string)) {
-              const p = await ctx.db.get(item.productId);
-              productCache.set(item.productId as string, {
-                categories: p?.categories ?? [],
-                tags: p?.tags ?? [],
-              });
-            }
+      if (hasProductFilters) {
+        const productCache = new Map<
+          string,
+          { categories: string[]; tags: string[] }
+        >();
+        for (const item of cartItems) {
+          if (!productCache.has(item.productId as string)) {
+            const p = await ctx.db.get(item.productId as Id<"products">);
+            const prod = p as { categories?: string[]; tags?: string[] } | null;
+            productCache.set(item.productId as string, {
+              categories: prod?.categories ?? [],
+              tags: prod?.tags ?? [],
+            });
           }
-          const getProductTags = (productId: string) =>
-            productCache.get(productId);
+        }
+        const getProductTags = (productId: string) =>
+          productCache.get(productId);
 
-          couponDiscountCents = computeCouponDiscount({
-            coupon: {
-              type: coupon.type,
-              value: coupon.value,
-              minSubtotalCents: coupon.minSubtotalCents,
-              includeProductIds: coupon.includeProductIds?.map(String),
-              includeCategoryTags: coupon.includeCategoryTags,
-              excludeProductIds: coupon.excludeProductIds?.map(String),
-              excludeCategoryTags: coupon.excludeCategoryTags,
-            },
-            items: cartItems.map((item) => ({
+        couponDiscountCents = computeCouponDiscount({
+          coupon: {
+            type: coupon.type,
+            value: coupon.value,
+            minSubtotalCents: coupon.minSubtotalCents,
+            includeProductIds: coupon.includeProductIds?.map(String),
+            includeCategoryTags: coupon.includeCategoryTags,
+            excludeProductIds: coupon.excludeProductIds?.map(String),
+            excludeCategoryTags: coupon.excludeCategoryTags,
+          },
+          items: cartItems.map((item) => ({
             productId: item.productId as string,
             unitPriceSnapshotCents: item.unitPriceSnapshotCents,
             qty: item.qty,

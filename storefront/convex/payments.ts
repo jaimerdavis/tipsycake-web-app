@@ -1,6 +1,7 @@
 "use node";
 
 import { action, internalAction } from "./_generated/server";
+import type { ActionCtx } from "./_generated/server";
 import { v } from "convex/values";
 import Stripe from "stripe";
 import { api, internal } from "./_generated/api";
@@ -369,7 +370,7 @@ export const createPaymentIntent = action({
 
 /** Get or create Stripe Customer for current user. Returns stripeCustomerId or null. */
 async function getOrCreateStripeCustomerForUser(
-  ctx: { runQuery: (fn: never, args: Record<string, never>) => Promise<{ _id: Id<"users">; email: string; name: string; stripeCustomerId?: string } | null>; runMutation: (fn: never, args: { userId: Id<"users">; stripeCustomerId: string }) => Promise<never> },
+  ctx: ActionCtx,
   stripeSecret: string
 ): Promise<string | null> {
   const me = await ctx.runQuery(api.users.meOrNull, {});
@@ -450,10 +451,12 @@ export const detachPaymentMethod = action({
   },
 });
 
+type PaymentMethodInfo = { id: string; brand: string; last4: string; expMonth: number; expYear: number };
+
 /** Admin: list payment methods for a customer by email. Includes PaymentMethods (pm_*) and legacy card sources (card_*). */
 export const listPaymentMethodsForCustomer = action({
   args: { email: v.string() },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<PaymentMethodInfo[]> => {
     const me = await ctx.runQuery(api.users.meOrNull, {});
     if (!me || (me.role !== "admin" && me.role !== "manager")) {
       throw new Error("Unauthorized");
@@ -461,9 +464,9 @@ export const listPaymentMethodsForCustomer = action({
     const stripeSecret = requireEnv("STRIPE_SECRET_KEY");
     const user = await ctx.runQuery(internal.users.getUserByEmailForMigration, {
       email: args.email.trim().toLowerCase(),
-    });
+    }) as { userId: Id<"users"> } | null;
     if (!user) return [];
-    const stripeUser = await ctx.runQuery(internal.users.getStripeCustomerIdForUser, { userId: user.userId });
+    const stripeUser = await ctx.runQuery(internal.users.getStripeCustomerIdForUser, { userId: user.userId }) as { stripeCustomerId?: string } | null;
     if (!stripeUser?.stripeCustomerId) return [];
 
     const cusId = stripeUser.stripeCustomerId;
@@ -478,7 +481,7 @@ export const listPaymentMethodsForCustomer = action({
       customer: cusId,
       type: "card",
     });
-    const fromPm = pmData.map((pm) => ({
+    const fromPm: PaymentMethodInfo[] = pmData.map((pm) => ({
       id: pm.id,
       brand: pm.card?.brand ?? "card",
       last4: pm.card?.last4 ?? "····",
@@ -487,10 +490,10 @@ export const listPaymentMethodsForCustomer = action({
     }));
 
     // Legacy card sources (card_xxx) from WooCommerce or older Stripe integrations
-    let fromSources: Array<{ id: string; brand: string; last4: string; expMonth: number; expYear: number }> = [];
+    let fromSources: PaymentMethodInfo[] = [];
     try {
       const sources = await stripe.customers.listSources(cusId, { limit: 100 });
-      const pmIds = new Set(fromPm.map((p) => p.id));
+      const pmIds = new Set(fromPm.map((p: PaymentMethodInfo) => p.id));
       for (const src of sources.data) {
         if (src.object === "card" && src.id && !pmIds.has(src.id)) {
           fromSources.push({

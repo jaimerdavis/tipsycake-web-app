@@ -222,6 +222,10 @@ export const computeDistanceAndZone = action({
   },
 });
 
+type TestAddressResult =
+  | { error: string; distanceMiles: null; eligibleDelivery: null; tierFeeCents: null; tierLabel: null }
+  | { error: null; formattedAddress: string; distanceMiles: number; eligibleDelivery: boolean; tierFeeCents: number | null; tierLabel: string | null };
+
 /**
  * Test an address for delivery: geocode, compute distance from store, find matching tier.
  * Admin-only. Use on the delivery pricing page to verify tier configuration.
@@ -230,7 +234,7 @@ export const testAddressForDelivery = action({
   args: {
     addressStr: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<TestAddressResult> => {
     const apiKey = process.env.GOOGLE_MAPS_API_KEY;
     if (!apiKey) {
       return {
@@ -265,8 +269,8 @@ export const testAddressForDelivery = action({
     const distanceMiles =
       drivingMiles ?? Math.round(haversineMiles(loc.lat, loc.lng, STORE_ORIGIN.lat, STORE_ORIGIN.lng) * 10) / 10;
 
-    const { deliveryMaxMiles } = await ctx.runQuery(api.checkout.getDeliveryConfigQuery, {});
-    const tiers = await ctx.runQuery(api.checkout.listDeliveryTiers, {});
+    const { deliveryMaxMiles } = await ctx.runQuery(api.checkout.getDeliveryConfigQuery, {}) as { deliveryMaxMiles: number };
+    const tiers = await ctx.runQuery(api.checkout.listDeliveryTiers, {}) as Array<{ enabled: boolean; minMiles: number; maxMiles: number; feeCents: number }>;
     const enabledTiers = tiers.filter((t) => t.enabled);
     const tier = enabledTiers.find(
       (t) => distanceMiles >= t.minMiles && distanceMiles < t.maxMiles

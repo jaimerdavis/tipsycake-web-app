@@ -73,6 +73,8 @@ export const run = internalAction({
   },
 });
 
+type MigrationResult = { ok: boolean; linked?: number; processed?: number; error?: string };
+
 /**
  * User-first migration: process Convex users without stripeCustomerId, look up Stripe by email.
  * Fast for ~100 users (one Stripe API call each). Use instead of run() when it gets stuck.
@@ -82,13 +84,13 @@ export const run = internalAction({
  */
 export const linkStripeForUsersWithoutId = internalAction({
   args: { limit: v.optional(v.number()) },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<MigrationResult> => {
     const stripeSecret = process.env.STRIPE_SECRET_KEY;
     if (!stripeSecret) return { ok: false, error: "STRIPE_SECRET_KEY not set" };
 
     const users = await ctx.runQuery(internal.users.listUsersWithoutStripeCustomerId, {
       limit: args.limit ?? 200,
-    });
+    }) as Array<{ userId: import("./_generated/dataModel").Id<"users">; email: string }>;
     if (users.length === 0) return { ok: true, linked: 0, processed: 0 };
 
     const stripe = new Stripe(stripeSecret);
