@@ -58,6 +58,7 @@ const PUBLIC_SETTING_KEYS = [
   "storeAddress",
   "storeTimezone",
   "siteUrl",
+  "homeUrl",
   "stripePublishableKey",
   "googleMapsClientKey",
   "mapboxAccessToken",
@@ -186,6 +187,11 @@ export const sendTestSms = mutation({
   },
   handler: async (ctx, args) => {
     await requireRole(ctx, "admin");
+    const settings = await ctx.db.query("siteSettings").collect();
+    const map = Object.fromEntries(settings.map((r) => [r.key, r.value]));
+    if (map.smsEnabled === "false") {
+      throw new Error("SMS is disabled. Enable SMS in Admin → Settings → SMS Settings to send test messages.");
+    }
     await ctx.scheduler.runAfter(0, internal.notifications.sendSms, {
       to: args.toPhone.trim(),
       body: "TheTipsyCake test SMS. If you got this, Twilio is configured correctly.",

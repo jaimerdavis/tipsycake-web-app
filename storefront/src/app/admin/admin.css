@@ -1,0 +1,63 @@
+/* Admin panel styles — only affect /admin/* routes, not the storefront */
+
+.admin-panel {
+  --admin-sidebar-bg: oklch(0.982 0.006 260);
+  --admin-sidebar-border: oklch(0.93 0.01 260);
+  --admin-sidebar-active: oklch(0.32 0.08 260);
+  --admin-sidebar-active-fg: oklch(0.99 0 0);
+  --admin-sidebar-hover: oklch(0.96 0.01 260);
+}
+
+/* Sidebar — subtle slate tint */
+.admin-panel aside {
+  background: var(--admin-sidebar-bg) !important;
+  border-right-color: var(--admin-sidebar-border) !important;
+}
+
+.admin-panel aside nav a {
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.admin-panel aside nav a:hover:not([class*="bg-primary"]) {
+  background: var(--admin-sidebar-hover) !important;
+}
+
+.admin-panel aside nav a[class*="bg-primary"] {
+  background: var(--admin-sidebar-active) !important;
+  color: var(--admin-sidebar-active-fg) !important;
+  font-weight: 500;
+}
+
+.admin-panel .admin-brand {
+  color: var(--admin-sidebar-active);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Main content — soft background */
+.admin-panel > div > main {
+  background: oklch(0.988 0.003 260);
+}
+
+/* Cards — slightly refined shadow */
+.admin-panel [data-slot="card"] {
+  box-shadow: 0 1px 2px oklch(0 0 0 / 0.04);
+}
+
+/* Page headers */
+.admin-panel main h1 {
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+.admin-panel main header > p.text-muted-foreground {
+  max-width: 42rem;
+  line-height: 1.5;
+}
+
+/* Log/item cards in lists */
+.admin-panel .rounded.border.bg-muted\/30,
+.admin-panel .rounded-lg.border.bg-muted\/30 {
+  background: oklch(0.985 0.004 260) !important;
+  border-color: oklch(0.92 0.01 260);
+}

@@ -1,7 +1,6 @@
 import { internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 
-const ONE_HOUR_MS = 60 * 60 * 1000;
 const REMINDER_STATUSES = [
   "paid_confirmed",
   "order_accepted",
@@ -17,17 +16,27 @@ export const scanAndSendReminders = internalMutation({
     const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
     const storeEmail = settings.storeEmail?.trim();
     const notifyOwner = settings.notifyOwnerOnOrder !== "false";
+    const smsEnabled = settings.smsEnabled !== "false";
+    const reminderEnabled = settings.orderReminderEnabled !== "false";
+    const firstHours = Math.max(0.5, Math.min(24, Number(settings.orderReminderFirstHours) || 1));
+    const secondHours = Math.max(
+      firstHours + 0.5,
+      Math.min(72, Number(settings.orderReminderSecondHours) || 2)
+    );
 
-    if (!storeEmail || notifyOwner === false) return { reminded: 0 };
+    if (!storeEmail || notifyOwner === false || reminderEnabled === false) return { reminded: 0 };
 
-    const oneHourAgo = now - ONE_HOUR_MS;
+    const firstMs = firstHours * 60 * 60 * 1000;
+    const secondMs = secondHours * 60 * 60 * 1000;
+    const cutoffMs = firstMs;
+
     let reminded = 0;
 
     for (const status of REMINDER_STATUSES) {
       const orders = await ctx.db
         .query("orders")
         .withIndex("by_status_updatedAt", (q) =>
-          q.eq("status", status).lte("updatedAt", oneHourAgo)
+          q.eq("status", status).lte("updatedAt", now - cutoffMs)
         )
         .collect();
 
@@ -35,25 +44,25 @@ export const scanAndSendReminders = internalMutation({
         const elapsed = now - order.updatedAt;
         const lastLevel = order.lastReminderLevel ?? 0;
 
-        if (elapsed >= 2 * ONE_HOUR_MS && lastLevel === 1) {
+        if (elapsed >= secondMs && lastLevel === 1) {
           await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderReminder, {
             email: storeEmail,
-            phone: settings.storePhone?.trim() || undefined,
+            phone: smsEnabled ? settings.storePhone?.trim() || undefined : undefined,
             orderNumber: order.orderNumber,
             orderId: order._id,
             status: order.status,
-            hoursStale: 2,
+            hoursStale: Math.round(secondHours),
           });
           await ctx.db.patch(order._id, { lastReminderLevel: 2 });
           reminded += 1;
-        } else if (elapsed >= ONE_HOUR_MS && lastLevel < 1) {
+        } else if (elapsed >= firstMs && lastLevel < 1) {
           await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderReminder, {
             email: storeEmail,
-            phone: settings.storePhone?.trim() || undefined,
+            phone: smsEnabled ? settings.storePhone?.trim() || undefined : undefined,
             orderNumber: order.orderNumber,
             orderId: order._id,
             status: order.status,
-            hoursStale: 1,
+            hoursStale: Math.round(firstHours),
           });
           await ctx.db.patch(order._id, { lastReminderLevel: 1 });
           reminded += 1;

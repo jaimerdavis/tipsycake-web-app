@@ -122,6 +122,7 @@ export const claimOrder = mutation({
       const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
       const storeName = settings.storeName ?? "TheTipsyCake";
       const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
+      const smsEnabled = settings.smsEnabled !== "false";
       const rendered = await renderStatusUpdate(ctx, {
         storeName,
         orderNumber: order.orderNumber,
@@ -129,7 +130,7 @@ export const claimOrder = mutation({
       });
       await ctx.scheduler.runAfter(0, internal.notifications.sendOrderStatusUpdate, {
         email: order.contactEmail?.trim() || undefined,
-        phone: order.contactPhone?.trim() || undefined,
+        phone: smsEnabled ? order.contactPhone?.trim() || undefined : undefined,
         orderNumber: order.orderNumber,
         orderId: order._id,
         status: "out_for_delivery",
@@ -219,6 +220,7 @@ export const updateStatus = mutation({
       if (order) {
         const settingsRows = await ctx.db.query("siteSettings").collect();
         const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+        const smsEnabled = settings.smsEnabled !== "false";
         if (order.contactEmail || order.contactPhone) {
           const storeName = settings.storeName ?? "TheTipsyCake";
           const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
@@ -229,7 +231,7 @@ export const updateStatus = mutation({
           });
           await ctx.scheduler.runAfter(0, internal.notifications.sendOrderStatusUpdate, {
             email: order.contactEmail?.trim() || undefined,
-            phone: order.contactPhone?.trim() || undefined,
+            phone: smsEnabled ? order.contactPhone?.trim() || undefined : undefined,
             orderNumber: order.orderNumber,
             orderId: order._id,
             status: "delivered",
@@ -243,7 +245,7 @@ export const updateStatus = mutation({
         if (storeEmail && notifyOwner) {
           await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderComplete, {
             email: storeEmail,
-            phone: settings.storePhone?.trim() || undefined,
+            phone: smsEnabled ? settings.storePhone?.trim() || undefined : undefined,
             orderNumber: order.orderNumber,
             orderId: order._id,
             status: "delivered",

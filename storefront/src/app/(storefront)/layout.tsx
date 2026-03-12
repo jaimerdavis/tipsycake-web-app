@@ -10,7 +10,9 @@ import { BottomNav } from "@/components/BottomNav";
 import { ChatWidgetUniversal } from "@/components/ChatWidgetUniversal";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { useCartCount } from "@/hooks/useCartCount";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
 
 const navLinks = [
@@ -27,6 +29,7 @@ export default function StorefrontLayout({
   const { isSignedIn } = useAuth();
   const { signOut } = useClerk();
   const settings = useSiteSettings();
+  const cartCount = useCartCount();
   const logoUrl = settings.get("logoUrl");
   const storeName = settings.get("storeName") || "TheTipsyCake";
   const faviconUrl = settings.get("faviconUrl");
@@ -53,7 +56,7 @@ export default function StorefrontLayout({
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-40 border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/60">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-4 px-4 sm:gap-6">
-          <Link href="/" className="flex shrink-0 items-center">
+          <Link href={(settings.get("homeUrl") || "/").trim() || "/"} className="flex shrink-0 items-center">
             {logoUrl ? (
               <img src={logoUrl} alt={storeName} className="h-10 w-10 rounded-md object-contain" />
             ) : (
@@ -72,6 +75,7 @@ export default function StorefrontLayout({
           <nav className="hidden items-center gap-1 sm:flex">
             {navLinks.map((link) => {
               const active = pathname.startsWith(link.href);
+              const isCart = link.href === "/cart";
               return (
                 <Button
                   key={link.href}
@@ -80,7 +84,17 @@ export default function StorefrontLayout({
                   size="sm"
                   className="rounded-full transition-all duration-150 active:scale-95"
                 >
-                  <Link href={link.href}>{link.label}</Link>
+                  <Link href={link.href} className="inline-flex items-center gap-1.5">
+                    {link.label}
+                    {isCart && cartCount > 0 && (
+                      <Badge
+                        variant="secondary"
+                        className="min-w-[1.25rem] rounded-full px-1.5 py-0 text-xs font-bold"
+                      >
+                        {cartCount}
+                      </Badge>
+                    )}
+                  </Link>
                 </Button>
               );
             })}
@@ -201,17 +215,26 @@ export default function StorefrontLayout({
             <div className="flex flex-col gap-1">
               {navLinks.map((link) => {
                 const active = pathname.startsWith(link.href);
+                const isCart = link.href === "/cart";
                 return (
                   <Link
                     key={link.href}
                     href={link.href}
-                    className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                    className={`inline-flex items-center justify-between rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
                       active
                         ? "bg-secondary text-foreground"
                         : "text-muted-foreground hover:bg-accent hover:text-foreground"
                     }`}
                   >
                     {link.label}
+                    {isCart && cartCount > 0 && (
+                      <Badge
+                        variant="secondary"
+                        className="min-w-[1.25rem] rounded-full px-1.5 py-0 text-xs font-bold"
+                      >
+                        {cartCount}
+                      </Badge>
+                    )}
                   </Link>
                 );
               })}

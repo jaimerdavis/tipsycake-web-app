@@ -1,3 +1,4 @@
+import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query } from "../_generated/server";
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
@@ -5,6 +6,18 @@ import { internal } from "../_generated/api";
 
 import { requireRole } from "../lib/auth";
 import { renderStatusUpdate } from "../lib/emailTemplates";
+
+function startOfDayMs(date: Date): number {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function endOfDayMs(date: Date): number {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+}
 
 const NOTIFY_STATUSES = new Set([
   "order_accepted",
@@ -46,62 +59,384 @@ export const list = query({
     fulfillmentMode: v.optional(
       v.union(v.literal("pickup"), v.literal("delivery"), v.literal("shipping"))
     ),
+    contactEmail: v.optional(v.string()),
+    /** Search: order number, email, or customer name (partial match) */
+    search: v.optional(v.string()),
+    productId: v.optional(v.id("products")),
+    dateFrom: v.optional(v.string()),
+    dateTo: v.optional(v.string()),
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
     await requireRole(ctx, "admin", "manager", "kitchen", "dispatcher");
 
-    let paginated;
-    if (args.status && args.fulfillmentMode) {
-      paginated = await ctx.db
-        .query("orders")
-        .withIndex("by_status_fulfillmentMode_createdAt", (q) =>
-          q.eq("status", args.status!).eq("fulfillmentMode", args.fulfillmentMode!)
-        )
-        .order("desc")
-        .paginate(args.paginationOpts);
-    } else if (args.status) {
-      paginated = await ctx.db
-        .query("orders")
-        .withIndex("by_status_createdAt", (q) => q.eq("status", args.status!))
-        .order("desc")
-        .paginate(args.paginationOpts);
-    } else if (args.fulfillmentMode) {
-      paginated = await ctx.db
-        .query("orders")
-        .withIndex("by_fulfillmentMode_createdAt", (q) =>
-          q.eq("fulfillmentMode", args.fulfillmentMode!)
-        )
-        .order("desc")
-        .paginate(args.paginationOpts);
-    } else {
-      paginated = await ctx.db
-        .query("orders")
-        .withIndex("by_createdAt")
-        .order("desc")
-        .paginate(args.paginationOpts);
+    const searchTrimmed = args.search?.trim();
+    const normalizedEmail =
+      args.contactEmail?.trim()?.toLowerCase() ??
+      (searchTrimmed?.includes("@") ? searchTrimmed.trim().toLowerCase() : undefined);
+
+    const dateFromMs = args.dateFrom ? startOfDayMs(new Date(args.dateFrom)) : undefined;
+    const dateToMs = args.dateTo ? endOfDayMs(new Date(args.dateTo)) : undefined;
+
+    /** When productId filter is set: collect orders that contain this product. */
+    if (args.productId) {
+      const allItems = await ctx.db.query("orderItems").collect();
+      const orderIds = new Set<Id<"orders">>();
+      for (const item of allItems) {
+        const snap = item.productSnapshot as { productId?: Id<"products"> };
+        if (snap?.productId === args.productId) {
+          orderIds.add(item.orderId);
+        }
+      }
+      const fetched = await Promise.all(
+        Array.from(orderIds).map((id) => ctx.db.get(id))
+      );
+      let orders = fetched.filter((o): o is Doc<"orders"> => o != null);
+      orders.sort((a, b) => b.createdAt - a.createdAt);
+
+      if (normalizedEmail) {
+        orders = orders.filter(
+          (o) => o.contactEmail?.toLowerCase() === normalizedEmail
+        );
+      }
+      if (args.status) {
+        orders = orders.filter((o) => o.status === args.status);
+      }
+      if (args.fulfillmentMode) {
+        orders = orders.filter((o) => o.fulfillmentMode === args.fulfillmentMode);
+      }
+      if (dateFromMs != null) {
+        orders = orders.filter((o) => o.createdAt >= dateFromMs);
+      }
+      if (dateToMs != null) {
+        orders = orders.filter((o) => o.createdAt <= dateToMs);
+      }
+      if (searchTrimmed && !searchTrimmed.includes("@")) {
+        const needle = searchTrimmed.toLowerCase();
+        orders = orders.filter((o) => {
+          const onum = o.orderNumber?.toLowerCase();
+          const email = o.contactEmail?.toLowerCase();
+          const name = o.contactName?.toLowerCase();
+          return (
+            (onum?.includes(needle) ?? false) ||
+            (email?.includes(needle) ?? false) ||
+            (name?.includes(needle) ?? false)
+          );
+        });
+      }
+
+      const { numItems, cursor } = args.paginationOpts;
+      const start = cursor ? parseInt(cursor, 10) : 0;
+      const page = orders.slice(start, start + numItems);
+      const enrichedPage = await Promise.all(
+        page.map(async (order) => {
+          const items = await ctx.db
+            .query("orderItems")
+            .withIndex("by_order", (q) => q.eq("orderId", order._id))
+            .collect();
+          const user = order.userId ? await ctx.db.get(order.userId) : null;
+          const address = order.addressId ? await ctx.db.get(order.addressId) : null;
+          return {
+            ...order,
+            items,
+            userName: user?.name,
+            userEmail: user?.email,
+            addressFormatted: address?.formatted ?? null,
+          };
+        })
+      );
+      return {
+        page: enrichedPage,
+        continueCursor: start + numItems < orders.length ? String(start + numItems) : null,
+        isDone: start + numItems >= orders.length,
+      };
     }
 
-    const enrichedPage = await Promise.all(
-      paginated.page.map(async (order) => {
+    /** Order number exact search */
+    if (searchTrimmed && /^\d{1,8}$/.test(searchTrimmed)) {
+      const order = await ctx.db
+        .query("orders")
+        .withIndex("by_orderNumber", (q) => q.eq("orderNumber", searchTrimmed))
+        .first();
+      if (order) {
         const items = await ctx.db
           .query("orderItems")
           .withIndex("by_order", (q) => q.eq("orderId", order._id))
           .collect();
         const user = order.userId ? await ctx.db.get(order.userId) : null;
+        const address = order.addressId ? await ctx.db.get(order.addressId) : null;
         return {
-          ...order,
-          items,
-          userName: user?.name,
-          userEmail: user?.email,
+          page: [
+            {
+              ...order,
+              items,
+              userName: user?.name,
+              userEmail: user?.email,
+              addressFormatted: address?.formatted ?? null,
+            },
+          ],
+          continueCursor: null,
+          isDone: true,
         };
-      })
-    );
+      }
+    }
 
-    return {
-      ...paginated,
-      page: enrichedPage,
-    };
+    if (normalizedEmail) {
+      const base = await ctx.db
+        .query("orders")
+        .withIndex("by_contactEmail_createdAt", (q) =>
+          q.eq("contactEmail", normalizedEmail)
+        )
+        .collect();
+      const filtered = base.filter((o) => {
+        if (dateFromMs != null && o.createdAt < dateFromMs) return false;
+        if (dateToMs != null && o.createdAt > dateToMs) return false;
+        return true;
+      });
+      filtered.sort((a, b) => b.createdAt - a.createdAt);
+      const { numItems, cursor } = args.paginationOpts;
+      const start = cursor ? parseInt(cursor, 10) : 0;
+      const page = filtered.slice(start, start + numItems);
+      const enrichedPage = await Promise.all(
+        page.map(async (order) => {
+          const items = await ctx.db
+            .query("orderItems")
+            .withIndex("by_order", (q) => q.eq("orderId", order._id))
+            .collect();
+          const user = order.userId ? await ctx.db.get(order.userId) : null;
+          const address = order.addressId ? await ctx.db.get(order.addressId) : null;
+          return {
+            ...order,
+            items,
+            userName: user?.name,
+            userEmail: user?.email,
+            addressFormatted: address?.formatted ?? null,
+          };
+        })
+      );
+      return {
+        page: enrichedPage,
+        continueCursor:
+          start + numItems < filtered.length ? String(start + numItems) : null,
+        isDone: start + numItems >= filtered.length,
+      };
+    } else if (args.status && args.fulfillmentMode) {
+      let base = await ctx.db
+        .query("orders")
+        .withIndex("by_status_fulfillmentMode_createdAt", (q) =>
+          q.eq("status", args.status!).eq("fulfillmentMode", args.fulfillmentMode!)
+        )
+        .order("desc")
+        .collect();
+      if (dateFromMs != null || dateToMs != null) {
+        base = base.filter((o) => {
+          if (dateFromMs != null && o.createdAt < dateFromMs) return false;
+          if (dateToMs != null && o.createdAt > dateToMs) return false;
+          return true;
+        });
+      }
+      if (searchTrimmed && !searchTrimmed.includes("@")) {
+        const needle = searchTrimmed.toLowerCase();
+        base = base.filter((o) => {
+          const onum = o.orderNumber?.toLowerCase();
+          const email = o.contactEmail?.toLowerCase();
+          const name = o.contactName?.toLowerCase();
+          return (
+            (onum?.includes(needle) ?? false) ||
+            (email?.includes(needle) ?? false) ||
+            (name?.includes(needle) ?? false)
+          );
+        });
+      }
+      base.sort((a, b) => b.createdAt - a.createdAt);
+      const { numItems, cursor } = args.paginationOpts;
+      const start = cursor ? parseInt(cursor, 10) : 0;
+      const page = base.slice(start, start + numItems);
+      const enrichedPage = await Promise.all(
+        page.map(async (order) => {
+          const items = await ctx.db
+            .query("orderItems")
+            .withIndex("by_order", (q) => q.eq("orderId", order._id))
+            .collect();
+          const user = order.userId ? await ctx.db.get(order.userId) : null;
+          const address = order.addressId ? await ctx.db.get(order.addressId) : null;
+          return {
+            ...order,
+            items,
+            userName: user?.name,
+            userEmail: user?.email,
+            addressFormatted: address?.formatted ?? null,
+          };
+        })
+      );
+      return {
+        page: enrichedPage,
+        continueCursor:
+          start + numItems < base.length ? String(start + numItems) : null,
+        isDone: start + numItems >= base.length,
+      };
+    } else if (args.status) {
+      let base = await ctx.db
+        .query("orders")
+        .withIndex("by_status_createdAt", (q) => q.eq("status", args.status!))
+        .order("desc")
+        .collect();
+      if (dateFromMs != null || dateToMs != null) {
+        base = base.filter((o) => {
+          if (dateFromMs != null && o.createdAt < dateFromMs) return false;
+          if (dateToMs != null && o.createdAt > dateToMs) return false;
+          return true;
+        });
+      }
+      if (searchTrimmed && !searchTrimmed.includes("@")) {
+        const needle = searchTrimmed.toLowerCase();
+        base = base.filter((o) => {
+          const onum = o.orderNumber?.toLowerCase();
+          const email = o.contactEmail?.toLowerCase();
+          const name = o.contactName?.toLowerCase();
+          return (
+            (onum?.includes(needle) ?? false) ||
+            (email?.includes(needle) ?? false) ||
+            (name?.includes(needle) ?? false)
+          );
+        });
+      }
+      base.sort((a, b) => b.createdAt - a.createdAt);
+      const { numItems, cursor } = args.paginationOpts;
+      const start = cursor ? parseInt(cursor, 10) : 0;
+      const page = base.slice(start, start + numItems);
+      const enrichedPage = await Promise.all(
+        page.map(async (order) => {
+          const items = await ctx.db
+            .query("orderItems")
+            .withIndex("by_order", (q) => q.eq("orderId", order._id))
+            .collect();
+          const user = order.userId ? await ctx.db.get(order.userId) : null;
+          const address = order.addressId ? await ctx.db.get(order.addressId) : null;
+          return {
+            ...order,
+            items,
+            userName: user?.name,
+            userEmail: user?.email,
+            addressFormatted: address?.formatted ?? null,
+          };
+        })
+      );
+      return {
+        page: enrichedPage,
+        continueCursor:
+          start + numItems < base.length ? String(start + numItems) : null,
+        isDone: start + numItems >= base.length,
+      };
+    } else if (args.fulfillmentMode) {
+      let base = await ctx.db
+        .query("orders")
+        .withIndex("by_fulfillmentMode_createdAt", (q) =>
+          q.eq("fulfillmentMode", args.fulfillmentMode!)
+        )
+        .order("desc")
+        .collect();
+      if (dateFromMs != null || dateToMs != null) {
+        base = base.filter((o) => {
+          if (dateFromMs != null && o.createdAt < dateFromMs) return false;
+          if (dateToMs != null && o.createdAt > dateToMs) return false;
+          return true;
+        });
+      }
+      if (searchTrimmed && !searchTrimmed.includes("@")) {
+        const needle = searchTrimmed.toLowerCase();
+        base = base.filter((o) => {
+          const onum = o.orderNumber?.toLowerCase();
+          const email = o.contactEmail?.toLowerCase();
+          const name = o.contactName?.toLowerCase();
+          return (
+            (onum?.includes(needle) ?? false) ||
+            (email?.includes(needle) ?? false) ||
+            (name?.includes(needle) ?? false)
+          );
+        });
+      }
+      base.sort((a, b) => b.createdAt - a.createdAt);
+      const { numItems, cursor } = args.paginationOpts;
+      const start = cursor ? parseInt(cursor, 10) : 0;
+      const page = base.slice(start, start + numItems);
+      const enrichedPage = await Promise.all(
+        page.map(async (order) => {
+          const items = await ctx.db
+            .query("orderItems")
+            .withIndex("by_order", (q) => q.eq("orderId", order._id))
+            .collect();
+          const user = order.userId ? await ctx.db.get(order.userId) : null;
+          const address = order.addressId ? await ctx.db.get(order.addressId) : null;
+          return {
+            ...order,
+            items,
+            userName: user?.name,
+            userEmail: user?.email,
+            addressFormatted: address?.formatted ?? null,
+          };
+        })
+      );
+      return {
+        page: enrichedPage,
+        continueCursor:
+          start + numItems < base.length ? String(start + numItems) : null,
+        isDone: start + numItems >= base.length,
+      };
+    } else {
+      let base = await ctx.db
+        .query("orders")
+        .withIndex("by_createdAt")
+        .order("desc")
+        .collect();
+      if (dateFromMs != null || dateToMs != null) {
+        base = base.filter((o) => {
+          if (dateFromMs != null && o.createdAt < dateFromMs) return false;
+          if (dateToMs != null && o.createdAt > dateToMs) return false;
+          return true;
+        });
+      }
+      if (searchTrimmed && !searchTrimmed.includes("@")) {
+        const needle = searchTrimmed.toLowerCase();
+        base = base.filter((o) => {
+          const onum = o.orderNumber?.toLowerCase();
+          const email = o.contactEmail?.toLowerCase();
+          const name = o.contactName?.toLowerCase();
+          return (
+            (onum?.includes(needle) ?? false) ||
+            (email?.includes(needle) ?? false) ||
+            (name?.includes(needle) ?? false)
+          );
+        });
+      }
+      base.sort((a, b) => b.createdAt - a.createdAt);
+      const { numItems, cursor } = args.paginationOpts;
+      const start = cursor ? parseInt(cursor, 10) : 0;
+      const page = base.slice(start, start + numItems);
+      const enrichedPage = await Promise.all(
+        page.map(async (order) => {
+          const items = await ctx.db
+            .query("orderItems")
+            .withIndex("by_order", (q) => q.eq("orderId", order._id))
+            .collect();
+          const user = order.userId ? await ctx.db.get(order.userId) : null;
+          const address = order.addressId ? await ctx.db.get(order.addressId) : null;
+          return {
+            ...order,
+            items,
+            userName: user?.name,
+            userEmail: user?.email,
+            addressFormatted: address?.formatted ?? null,
+          };
+        })
+      );
+      return {
+        page: enrichedPage,
+        continueCursor:
+          start + numItems < base.length ? String(start + numItems) : null,
+        isDone: start + numItems >= base.length,
+      };
+    }
   },
 });
 
@@ -175,6 +510,7 @@ export const updateStatus = mutation({
       const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
       const storeName = settings.storeName ?? "TheTipsyCake";
       const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
+      const smsEnabled = settings.smsEnabled !== "false";
       const rendered = await renderStatusUpdate(ctx, {
         storeName,
         orderNumber: order.orderNumber,
@@ -184,7 +520,7 @@ export const updateStatus = mutation({
       });
       await ctx.scheduler.runAfter(0, internal.notifications.sendOrderStatusUpdate, {
         email: order.contactEmail?.trim() || undefined,
-        phone: order.contactPhone?.trim() || undefined,
+        phone: smsEnabled ? order.contactPhone?.trim() || undefined : undefined,
         orderNumber: order.orderNumber,
         orderId: order._id,
         status: args.status,
@@ -199,10 +535,11 @@ export const updateStatus = mutation({
       const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
       const storeEmail = settings.storeEmail?.trim();
       const notifyOwner = settings.notifyOwnerOnOrder !== "false";
+      const smsEnabled = settings.smsEnabled !== "false";
       if (storeEmail && notifyOwner) {
         await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderComplete, {
           email: storeEmail,
-          phone: settings.storePhone?.trim() || undefined,
+          phone: smsEnabled ? settings.storePhone?.trim() || undefined : undefined,
           orderNumber: order.orderNumber,
           orderId: order._id,
           status: args.status,
@@ -291,6 +628,7 @@ export const assignDriver = mutation({
       const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
       const storeName = settings.storeName ?? "TheTipsyCake";
       const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
+      const smsEnabled = settings.smsEnabled !== "false";
       const rendered = await renderStatusUpdate(ctx, {
         storeName,
         orderNumber: order.orderNumber,
@@ -298,7 +636,7 @@ export const assignDriver = mutation({
       });
       await ctx.scheduler.runAfter(0, internal.notifications.sendOrderStatusUpdate, {
         email: order.contactEmail?.trim() || undefined,
-        phone: order.contactPhone?.trim() || undefined,
+        phone: smsEnabled ? order.contactPhone?.trim() || undefined : undefined,
         orderNumber: order.orderNumber,
         orderId: order._id,
         status: "out_for_delivery",
@@ -335,10 +673,11 @@ export const setTracking = mutation({
     const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
     const storeEmail = settings.storeEmail?.trim();
     const notifyOwner = settings.notifyOwnerOnOrder !== "false";
+    const smsEnabled = settings.smsEnabled !== "false";
     if (storeEmail && notifyOwner) {
       await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderComplete, {
         email: storeEmail,
-        phone: settings.storePhone?.trim() || undefined,
+        phone: smsEnabled ? settings.storePhone?.trim() || undefined : undefined,
         orderNumber: order.orderNumber,
         orderId: order._id,
         status: "shipped",
@@ -359,7 +698,7 @@ export const setTracking = mutation({
       });
       await ctx.scheduler.runAfter(0, internal.notifications.sendOrderStatusUpdate, {
         email: order.contactEmail?.trim() || undefined,
-        phone: order.contactPhone?.trim() || undefined,
+        phone: smsEnabled ? order.contactPhone?.trim() || undefined : undefined,
         orderNumber: order.orderNumber,
         orderId: order._id,
         status: "shipped",
@@ -372,5 +711,44 @@ export const setTracking = mutation({
     }
 
     return args.orderId;
+  },
+});
+
+/**
+ * One-time: link all guest orders (contactEmail, no userId) to users with matching email.
+ * Ensures customers see their full order history when signed in.
+ *
+ * Run from Convex Dashboard:
+ *   admin.orders:linkAllGuestOrdersToUsers
+ */
+export const linkAllGuestOrdersToUsers = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await requireRole(ctx, "admin");
+
+    const allOrders = await ctx.db.query("orders").collect();
+    const guestOrders = allOrders.filter((o) => o.contactEmail?.trim() && !o.userId);
+    if (guestOrders.length === 0) {
+      return { linked: 0, message: "No unlinked guest orders with email." };
+    }
+
+    const allUsers = await ctx.db.query("users").collect();
+    const emailToUser = new Map<string, (typeof allUsers)[0]>();
+    for (const u of allUsers) {
+      const email = u.email?.trim()?.toLowerCase();
+      if (email && !emailToUser.has(email)) emailToUser.set(email, u);
+    }
+
+    const now = Date.now();
+    let linked = 0;
+    for (const order of guestOrders) {
+      const email = order.contactEmail!.trim().toLowerCase();
+      const user = emailToUser.get(email);
+      if (!user) continue;
+      await ctx.db.patch(order._id, { userId: user._id, updatedAt: now });
+      linked++;
+    }
+
+    return { linked, totalGuestWithEmail: guestOrders.length };
   },
 });

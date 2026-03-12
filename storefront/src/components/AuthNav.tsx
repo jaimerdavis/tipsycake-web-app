@@ -1,16 +1,20 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { SignInButton, SignUpButton, UserButton, useAuth, useClerk } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 
 /**
  * Auth nav buttons (Sign in, Sign up, My Account, Sign out, UserButton).
  * Only render when Clerk is configured - useAuth requires ClerkProvider.
+ * UserButton is client-only to avoid hydration mismatch.
  */
 export function AuthNav() {
   const { isSignedIn } = useAuth();
   const { signOut } = useClerk();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   if (isSignedIn) {
     return (
@@ -26,7 +30,7 @@ export function AuthNav() {
         >
           Sign out
         </Button>
-        <UserButton appearance={{ variables: { colorPrimary: "#e92486" } }} />
+        {mounted && <UserButton appearance={{ variables: { colorPrimary: "#e92486" } }} />}
       </>
     );
   }

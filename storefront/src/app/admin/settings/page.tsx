@@ -40,6 +40,12 @@ const STORE_FIELDS = [
   { key: "storeAddress", label: "Store Address", placeholder: "123 Main St, Anytown, ST 12345" },
   { key: "storeTimezone", label: "Timezone", placeholder: "America/New_York" },
   { key: "siteUrl", label: "Site URL", placeholder: "https://order.tipsycake.com" },
+  {
+    key: "homeUrl",
+    label: "Home URL",
+    placeholder: "/",
+    help: "URL or path for the logo and Home link (e.g. / or /products). Default: /",
+  },
 ] as const;
 
 const PUBLIC_KEY_FIELDS = [

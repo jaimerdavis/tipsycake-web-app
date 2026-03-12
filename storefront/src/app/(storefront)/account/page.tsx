@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useAction, useConvexAuth } from "convex/react";
 import { useClerk, useAuth, UserButton } from "@clerk/nextjs";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useSyncExternalStore } from "react";
 
 import { api } from "../../../../convex/_generated/api";
 import { Badge } from "@/components/ui/badge";
@@ -45,7 +45,12 @@ export default function AccountPage() {
   } | null>(null);
   const [debugLoading, setDebugLoading] = useState(false);
   const [retryStatus, setRetryStatus] = useState<string | null>(null);
+  const [userButtonMounted, setUserButtonMounted] = useState(false);
   const hasClerk = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
+  useEffect(() => {
+    setUserButtonMounted(true);
+  }, []);
 
   const runDebugSync = useAction(api.usersSync.debugSyncResult);
   const debugSessionState = useQuery(api.users.debugSessionState);
@@ -161,7 +166,6 @@ export default function AccountPage() {
           Sign-in is not configured. Add Clerk keys to enable account access.
         </p>
         <Button asChild>
-          <Link href="/">Back to home</Link>
         </Button>
       </main>
     );
@@ -193,11 +197,15 @@ export default function AccountPage() {
             View order history and track your orders
           </p>
         </div>
-        <UserButton
-          appearance={{
-            variables: { colorPrimary: "#e92486" },
-          }}
-        />
+        {userButtonMounted ? (
+          <UserButton
+            appearance={{
+              variables: { colorPrimary: "#e92486" },
+            }}
+          />
+        ) : (
+          <div className="h-8 w-8 rounded-full bg-muted animate-pulse" aria-hidden />
+        )}
       </header>
 
       <Card>

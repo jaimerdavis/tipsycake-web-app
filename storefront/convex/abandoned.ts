@@ -6,8 +6,12 @@ import { renderAbandonedCart } from "./lib/emailTemplates";
 const ABANDONED_THRESHOLD_MS = 2 * 60 * 60 * 1000;
 const DEFAULT_SITE_URL = "http://localhost:3000";
 
+const ABANDONED_WORDS = ["CAKE", "SAVE", "DEAL", "TREAT", "SWEET", "TASTY", "BONUS"] as const;
+
 function generateAbandonedCode(): string {
-  return `ABANDONED-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  const word = ABANDONED_WORDS[Math.floor(Math.random() * ABANDONED_WORDS.length)];
+  const suffix = Math.random().toString(36).slice(2, 3).toUpperCase();
+  return `${word}${suffix}`;
 }
 
 export const scanAndNotify = internalMutation({
@@ -20,6 +24,7 @@ export const scanAndNotify = internalMutation({
     const settingsRows = await ctx.db.query("siteSettings").collect();
     const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
     const storeName = settings.storeName ?? "TheTipsyCake";
+    const smsEnabled = settings.smsEnabled !== "false";
     const incentiveEnabled = settings.emailAbandonedCartIncentiveEnabled !== "false";
     const couponCents = Math.max(0, Number(settings.emailAbandonedCartCouponCents) || 100);
     const expiryHours = Math.max(1, Math.min(168, Number(settings.emailAbandonedCartCouponExpiryHours) || 24));
@@ -89,7 +94,7 @@ export const scanAndNotify = internalMutation({
         }
       }
 
-      const restoreUrl = `${baseUrl}/cart`;
+      const restoreUrl = `${baseUrl}/cart?restore=${cart._id}`;
       if (cart.contactEmail) {
         const rendered = await renderAbandonedCart(ctx, {
           storeName,
@@ -106,7 +111,7 @@ export const scanAndNotify = internalMutation({
           template: "abandoned_cart",
         });
       }
-      if (cart.contactPhone) {
+      if (cart.contactPhone && smsEnabled) {
         await ctx.scheduler.runAfter(0, internal.notifications.sendSms, {
           to: cart.contactPhone,
           body: `Your cart is waiting: ${restoreUrl}`,

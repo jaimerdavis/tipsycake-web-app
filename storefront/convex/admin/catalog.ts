@@ -19,6 +19,10 @@ const shapeImagesValidator = v.optional(
   })
 );
 
+const badgesValidator = v.optional(
+  v.array(v.union(v.literal("popular"), v.literal("new_flavor"), v.literal("best_seller")))
+);
+
 export const listProducts = query({
   args: {},
   handler: async (ctx) => {
@@ -61,6 +65,7 @@ export const createProduct = mutation({
     leadTimeHoursOverride: v.optional(v.number()),
     inStockToday: v.boolean(),
     maxQtyPerOrder: v.optional(v.number()),
+    badges: badgesValidator,
   },
   handler: async (ctx, args) => {
     await requireRole(ctx, "admin", "manager");
@@ -76,6 +81,7 @@ export const createProduct = mutation({
     return await ctx.db.insert("products", {
       ...args,
       productCode: code || undefined,
+      badges: args.badges ?? [],
       createdAt: now,
       updatedAt: now,
     });
@@ -99,6 +105,7 @@ export const updateProduct = mutation({
     inStockToday: v.optional(v.boolean()),
     maxQtyPerOrder: v.optional(v.number()),
     shapeImages: shapeImagesValidator,
+    badges: badgesValidator,
   },
   handler: async (ctx, args) => {
     await requireRole(ctx, "admin", "manager");

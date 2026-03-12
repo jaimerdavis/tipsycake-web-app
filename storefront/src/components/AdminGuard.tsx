@@ -7,6 +7,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "convex/react";
 
 import { api } from "../../convex/_generated/api";
+import { useSiteSettings } from "@/hooks/useSiteSettings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -20,6 +21,8 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { isLoaded: clerkLoaded, isSignedIn } = useAuth();
   const user = useQuery(api.users.meOrNull);
+  const settings = useSiteSettings();
+  const homeHref = (settings.get("homeUrl") || "/").trim() || "/";
 
   useEffect(() => {
     if (!clerkLoaded) return;
@@ -65,7 +68,7 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
           </CardHeader>
           <CardContent className="flex gap-3">
             <Button asChild>
-              <Link href="/">Back to store</Link>
+              <Link href={homeHref}>Back to store</Link>
             </Button>
             <Button variant="outline" asChild>
               <Link href="/account">My account</Link>

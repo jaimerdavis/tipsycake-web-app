@@ -305,6 +305,51 @@
   animation: status-glow 2s ease-in-out infinite;
 }
 
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.85; }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2.5s ease-in-out infinite;
+}
+
+/* Product badge animations */
+@keyframes badge-glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 8px var(--badge-glow), inset 0 1px 0 rgba(255,255,255,0.4);
+  }
+  50% {
+    box-shadow: 0 0 16px var(--badge-glow), inset 0 1px 0 rgba(255,255,255,0.5);
+  }
+}
+
+@keyframes badge-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1px);
+  }
+}
+
+.animate-badge-glow {
+  animation: badge-glow-pulse 3s ease-in-out infinite;
+}
+
+@keyframes badge-shimmer-move {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.animate-badge-shimmer {
+  animation: badge-shimmer-move 4s ease-in-out infinite;
+}
+
 /* PWA safe area support */
 .pb-safe {
   padding-bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));

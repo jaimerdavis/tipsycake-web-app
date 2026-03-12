@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
+import { ChevronRight } from "lucide-react";
 
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { api } from "../../../../convex/_generated/api";
@@ -10,6 +12,11 @@ import { CUSTOMER_STATUS_LABELS } from "@/lib/orderStatusConfig";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -106,12 +113,27 @@ const STATUS_FILTERS = [
 ] as const;
 
 export default function AdminOrdersPage() {
+  const searchParams = useSearchParams();
+  const emailFilter = searchParams.get("email")?.trim() || undefined;
+  const [search, setSearch] = useState("");
   const [fulfillmentFilter, setFulfillmentFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [productFilter, setProductFilter] = useState<string>("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
+  const products = useQuery(api.admin.catalog.listProducts);
   const { results: orders = [], status: ordersStatus, loadMore: loadMoreOrders } = usePaginatedQuery(
     api.admin.orders.list,
     {
+      contactEmail: emailFilter,
+      search: search.trim() || undefined,
+      productId:
+        productFilter === "all"
+          ? undefined
+          : (productFilter as Id<"products">),
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
       fulfillmentMode:
         fulfillmentFilter === "all"
           ? undefined
@@ -145,6 +167,89 @@ export default function AdminOrdersPage() {
         </p>
       </header>
 
+      <div className="space-y-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+          <Label htmlFor="search" className="sr-only">
+            Search orders
+          </Label>
+          <Input
+            id="search"
+            type="search"
+            placeholder="Order #, email, or customer name…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="max-w-xs"
+          />
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex shrink-0 items-center gap-2">
+              <Label htmlFor="product-filter" className="whitespace-nowrap text-sm text-muted-foreground">
+                Cake
+              </Label>
+              <Select value={productFilter} onValueChange={setProductFilter}>
+                <SelectTrigger id="product-filter" className="w-[140px]">
+                  <SelectValue placeholder="All cakes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All cakes</SelectItem>
+                  {(products ?? []).map((p) => (
+                    <SelectItem key={p._id} value={p._id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Label htmlFor="date-from" className="whitespace-nowrap text-sm text-muted-foreground">
+                From
+              </Label>
+              <Input
+                id="date-from"
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="w-[130px]"
+              />
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Label htmlFor="date-to" className="whitespace-nowrap text-sm text-muted-foreground">
+                To
+              </Label>
+              <Input
+                id="date-to"
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="w-[130px]"
+              />
+            </div>
+            {(search || productFilter !== "all" || dateFrom || dateTo) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSearch("");
+                  setProductFilter("all");
+                  setDateFrom("");
+                  setDateTo("");
+                }}
+              >
+                Clear filters
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {emailFilter && (
+        <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 text-sm">
+          <span className="text-muted-foreground">Filtering by customer:</span>
+          <span className="font-medium">{emailFilter}</span>
+          <Button variant="ghost" size="sm" asChild>
+            <Link href="/admin/orders">Clear</Link>
+          </Button>
+        </div>
+      )}
       <div className="flex min-w-0 flex-wrap items-center gap-3 sm:gap-4">
         <div className="flex min-w-0 shrink items-center gap-2">
           <Label htmlFor="fulfillment-filter" className="shrink-0 whitespace-nowrap text-sm">
@@ -182,44 +287,70 @@ export default function AdminOrdersPage() {
         </div>
       </div>
 
-      <section className="grid min-w-0 gap-4">
+      <section className="space-y-2">
         {orders.map((order) => (
-          <Card key={order._id} className="min-w-0 overflow-hidden">
-            <CardHeader className="pb-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-baseline gap-3">
-                  <CardTitle className="font-mono text-xl">#{order.orderNumber}</CardTitle>
-                  <Badge variant="outline" className="capitalize font-normal">
-                    {order.fulfillmentMode}
-                  </Badge>
-                  <Badge variant={order.status === "paid_confirmed" ? "default" : "secondary"}>
-                    {CUSTOMER_STATUS_LABELS[order.status] ?? order.status.replace(/_/g, " ")}
-                  </Badge>
-                </div>
-                <span className="text-sm text-muted-foreground">
-                  {new Date(order.createdAt).toLocaleString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                </span>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <Collapsible key={order._id} asChild defaultOpen={false}>
+            <Card className="min-w-0 overflow-hidden group/collapse">
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="w-full text-left hover:bg-muted/50 transition-colors"
+                  aria-label={`Expand order #${order.orderNumber}`}
+                >
+                  <CardHeader className="pb-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <ChevronRight className="h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]/collapse:rotate-90" />
+                        <CardTitle className="font-mono text-lg">#{order.orderNumber}</CardTitle>
+                        <Badge variant="outline" className="capitalize font-normal text-xs">
+                          {order.fulfillmentMode}
+                        </Badge>
+                        <Badge variant={order.status === "paid_confirmed" ? "default" : "secondary"} className="text-xs">
+                          {CUSTOMER_STATUS_LABELS[order.status] ?? order.status.replace(/_/g, " ")}
+                        </Badge>
+                        <span className="text-sm text-muted-foreground truncate">
+                          {(order.contactName as string | undefined) ??
+                            (order.userId ? order.userName ?? "Account" : order.contactEmail ?? "Guest")}
+                        </span>
+                        <span className="text-sm font-medium">
+                          ${(order.pricingSnapshot.totalCents / 100).toFixed(2)}
+                        </span>
+                      </div>
+                      <span className="text-sm text-muted-foreground shrink-0">
+                        {new Date(order.createdAt).toLocaleString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                  </CardHeader>
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="space-y-4 pt-0">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">
                     Customer
                   </p>
                   <p className="font-medium">
-                    {order.userId ? order.userName ?? "Account" : "Guest"}
+                    {(order.contactName as string | undefined) ??
+                      (order.userId ? order.userName ?? "Account" : "Guest")}
                     {order.userEmail && (
                       <span className="ml-1 text-muted-foreground text-sm">({order.userEmail})</span>
                     )}
                   </p>
                   <p className="text-sm text-muted-foreground">{order.contactPhone ?? order.contactEmail ?? "—"}</p>
+                  {(order.fulfillmentMode === "delivery" || order.fulfillmentMode === "shipping") &&
+                    (order.addressFormatted ? (
+                      <p className="mt-1.5 text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">Delivery:</span> {order.addressFormatted}
+                      </p>
+                    ) : (
+                      <p className="mt-1.5 text-sm text-amber-600 dark:text-amber-500">Address missing</p>
+                    ))}
                 </div>
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">
@@ -263,7 +394,7 @@ export default function AdminOrdersPage() {
                   size="sm"
                   className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                   onClick={() =>
-                    setDeleteConfirmOrder({ _id: order._id, orderNumber: order.orderNumber })
+                    setCancelConfirmOrder({ _id: order._id, orderNumber: order.orderNumber })
                   }
                 >
                   Delete order
@@ -418,7 +549,9 @@ export default function AdminOrdersPage() {
                 </div>
               )}
             </CardContent>
-          </Card>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
         ))}
         {ordersStatus === "CanLoadMore" && (
           <Button variant="outline" onClick={() => loadMoreOrders(50)}>

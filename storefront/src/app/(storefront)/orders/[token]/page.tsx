@@ -5,6 +5,7 @@ import { useQuery } from "convex/react";
 
 import { api } from "../../../../../convex/_generated/api";
 import { productDisplayName } from "@/lib/utils";
+import { useSiteSettings } from "@/hooks/useSiteSettings";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DeliveryMap } from "@/components/DeliveryMap";
 import { OrderStatusStepper } from "@/components/OrderStatusStepper";
@@ -28,6 +29,7 @@ function dollars(cents: number) {
 export default function OrderStatusByTokenPage() {
   const params = useParams<{ token: string }>();
   const token = params.token as string;
+  const settings = useSiteSettings();
   const order = useQuery(api.orders.getByToken, { token });
   const deliveryTracking = useQuery(
     api.orders.getDeliveryTrackingByToken,
@@ -61,6 +63,25 @@ export default function OrderStatusByTokenPage() {
         <h2 className="sr-only">Order progress</h2>
         <OrderStatusStepper order={order} />
       </section>
+
+      <Card className="rounded-2xl">
+        <CardHeader>
+          <CardTitle className="font-display text-2xl text-brand-text">
+            {order.fulfillmentMode === "pickup" ? "Where to pick up" : order.fulfillmentMode === "delivery" ? "Delivery address" : "Shipping address"}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {order.fulfillmentMode === "pickup" ? (
+            <p className="text-sm">
+              {settings.get("storeAddress") || "Store address not set."}
+            </p>
+          ) : (
+            <p className="text-sm">
+              {order.addressFormatted || "Address not available."}
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {order.fulfillmentMode === "delivery" && deliveryTracking && (
         <Card className="rounded-2xl">

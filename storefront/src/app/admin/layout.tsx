@@ -1,14 +1,17 @@
 "use client";
 
+import "./admin.css";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { AdminGuard } from "@/components/AdminGuard";
 import { Button } from "@/components/ui/button";
+import { useSiteSettings } from "@/hooks/useSiteSettings";
 
 const navItems = [
   { href: "/admin/orders", label: "Orders" },
+  { href: "/admin/customers", label: "Customers" },
   { href: "/admin/products", label: "Products" },
   { href: "/admin/modifiers", label: "Store Modifiers" },
   { href: "/admin/gallery", label: "Gallery" },
@@ -22,6 +25,7 @@ const navItems = [
   { href: "/admin/analytics", label: "Analytics" },
   { href: "/admin/audit-logs", label: "Audit Logs" },
   { href: "/admin/settings/email", label: "Email Settings" },
+  { href: "/admin/settings/email/blast", label: "Email Blast" },
   { href: "/admin/settings/sms", label: "SMS Settings" },
   { href: "/admin/settings", label: "Settings" },
 ];
@@ -33,9 +37,11 @@ export default function AdminLayout({
 }) {
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const settings = useSiteSettings();
+  const homeHref = (settings.get("homeUrl") || "/").trim() || "/";
 
   return (
-    <div className="flex min-h-screen">
+    <div className="admin-panel flex min-h-screen">
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -51,7 +57,7 @@ export default function AdminLayout({
         }`}
       >
         <div className="mb-6 flex items-center justify-between">
-          <Link href="/" className="text-lg font-semibold tracking-tight">
+          <Link href={homeHref} className="admin-brand text-lg">
             TipsyCake Admin
           </Link>
           <Button
@@ -87,7 +93,7 @@ export default function AdminLayout({
         </nav>
         <div className="mt-auto border-t pt-4">
           <Link
-            href="/products"
+            href={homeHref}
             className="text-xs text-muted-foreground hover:text-foreground"
           >
             Back to Storefront
@@ -107,10 +113,12 @@ export default function AdminLayout({
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
           </Button>
-          <span className="text-sm font-semibold">TipsyCake Admin</span>
+          <span className="admin-brand text-sm">TipsyCake Admin</span>
         </div>
-        <main key={pathname} className="relative min-w-0 flex-1 overflow-x-hidden">
-          <AdminGuard>{children}</AdminGuard>
+        <main key={pathname} className="relative min-w-0 flex-1 overflow-x-hidden md:overflow-y-auto">
+          <div className="min-h-0 w-full p-4 pb-8 md:p-0">
+            <AdminGuard>{children}</AdminGuard>
+          </div>
         </main>
       </div>
     </div>

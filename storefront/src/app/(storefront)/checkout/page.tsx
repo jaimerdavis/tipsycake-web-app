@@ -17,6 +17,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -176,6 +185,8 @@ function CheckoutContent() {
 
   const GUEST_CHOSEN_KEY = "checkoutGuestChosen";
   const [guestCheckoutChosen, setGuestCheckoutChosen] = useState(false);
+  const [guestConfirmOpen, setGuestConfirmOpen] = useState(false);
+  const signUpTriggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     setGuestCheckoutChosen(sessionStorage.getItem(GUEST_CHOSEN_KEY) === "1");
   }, []);
@@ -382,37 +393,75 @@ function CheckoutContent() {
         <Card className="rounded-2xl">
           <CardContent className="flex flex-col gap-4 pt-6">
             <div className="space-y-3">
-              <SignInButton mode="modal" forceRedirectUrl="/checkout">
-                <Button className="w-full rounded-full bg-button text-stone-50 hover:bg-button-hover">
-                  Existing customer — Log in
-                </Button>
-              </SignInButton>
               <SignUpButton mode="modal" forceRedirectUrl="/checkout">
-                <Button className="w-full rounded-full" variant="secondary">
-                  Create account
+                <Button className="w-full rounded-full bg-button text-stone-50 hover:bg-button-hover">
+                  Create account — sign up FREE for points & rewards
                 </Button>
               </SignUpButton>
               <div className="space-y-2">
                 <Button
-                  variant="outline"
+                  variant="secondary"
                   className="w-full rounded-full"
-                  onClick={() => {
-                    setGuestCheckoutChosen(true);
-                    sessionStorage.setItem(GUEST_CHOSEN_KEY, "1");
-                  }}
+                  onClick={() => setGuestConfirmOpen(true)}
                 >
                   Guest checkout
                 </Button>
-                <p className="text-center text-xs text-muted-foreground">
-                  You can create an account anytime to track orders and earn rewards.
-                </p>
               </div>
+              <SignInButton mode="modal" forceRedirectUrl="/checkout">
+                <Button variant="outline" className="w-full rounded-full">
+                  Existing customer — Log in
+                </Button>
+              </SignInButton>
             </div>
             <Button variant="ghost" asChild className="w-full rounded-full">
               <Link href="/cart">&larr; Back to cart</Link>
             </Button>
           </CardContent>
         </Card>
+        <AlertDialog open={guestConfirmOpen} onOpenChange={setGuestConfirmOpen}>
+          <AlertDialogContent className="rounded-2xl">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="font-display text-xl">
+                Are you sure?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Sign up for FREE and earn points, rewards, exclusive offers, and order
+                tracking. It only takes a moment.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="flex-col-reverse sm:flex-row gap-2">
+              <SignUpButton mode="modal" forceRedirectUrl="/checkout">
+                <button
+                  ref={signUpTriggerRef}
+                  type="button"
+                  className="sr-only"
+                  tabIndex={-1}
+                  aria-hidden
+                />
+              </SignUpButton>
+              <Button
+                variant="default"
+                className="rounded-full w-full sm:w-auto"
+                onClick={() => {
+                  signUpTriggerRef.current?.click();
+                  setGuestConfirmOpen(false);
+                }}
+              >
+                Sign up for FREE
+              </Button>
+              <AlertDialogAction
+                className="rounded-full"
+                onClick={() => {
+                  setGuestCheckoutChosen(true);
+                  sessionStorage.setItem(GUEST_CHOSEN_KEY, "1");
+                  setGuestConfirmOpen(false);
+                }}
+              >
+                Continue as guest
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </main>
     );
   }
@@ -1189,6 +1238,7 @@ function CheckoutContent() {
             ) : (
               <div>
                 <StripePaymentForm
+                  key={`${cart._id}-${cart.updatedAt}`}
                   cartId={cart._id}
                   guestSessionId={guestSessionId}
                   onSuccess={() => {

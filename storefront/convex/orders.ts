@@ -839,7 +839,13 @@ export const getByToken = query({
       .withIndex("by_order", (q) => q.eq("orderId", order._id))
       .collect();
 
-    return { ...order, events, items };
+    let addressFormatted: string | null = null;
+    if (order.addressId) {
+      const addr = await ctx.db.get(order.addressId);
+      if (addr) addressFormatted = addr.formatted;
+    }
+
+    return { ...order, events, items, addressFormatted };
   },
 });
 

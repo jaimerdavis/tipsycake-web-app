@@ -37,6 +37,7 @@ import {
 import { Info } from "lucide-react";
 import { getOrCreateGuestSessionId } from "@/lib/guestSession";
 import { clearPreferredFulfillment, getPreferredFulfillment } from "@/lib/fulfillmentPreference";
+import { ProductBadges } from "@/components/ProductBadge";
 import { productDisplayName } from "@/lib/utils";
 
 const customizationSchema = z.object({
@@ -417,6 +418,8 @@ function ProductDetailContent() {
           </Link>
         </Button>
         <div className="space-y-3">
+          <div className="relative">
+            <ProductBadges badges={(product as { badges?: string[] }).badges} className="absolute left-0 top-0 z-10" />
           <div
             ref={imageContainerRef}
             key={selectedShapeKey || "default"}
@@ -427,6 +430,7 @@ function ProductDetailContent() {
               name={product.name}
               maxImages={4}
             />
+          </div>
           </div>
           <p className="text-xs text-muted-foreground/80">Each cake is made with care, so final appearance may vary slightly from the photo.</p>
           <div ref={shapeSectionRef}>{shapeSelectorBlock}</div>

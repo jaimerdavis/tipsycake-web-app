@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import type { Resolver } from "react-hook-form";
 import { useForm } from "react-hook-form";
@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { ProductBadge, type ProductBadgeType } from "@/components/ProductBadge";
 import { ImagePicker } from "@/components/ImagePicker";
 import { ProductImage } from "@/components/ProductImage";
 import {
@@ -134,8 +135,8 @@ function EditProductSheet({
   const [newOptionName, setNewOptionName] = useState("");
   const [newOptionDelta, setNewOptionDelta] = useState("");
 
-  // Inline edit states
-  const [editingVariantId, setEditingVariantId] = useState<string | null>(null);
+  // Badge toggles (synced from product when it loads)
+  const [selectedBadges, setSelectedBadges] = useState<ProductBadgeType[]>([]);
   const [editVariantLabel, setEditVariantLabel] = useState("");
   const [editVariantDelta, setEditVariantDelta] = useState("");
 
@@ -149,6 +150,18 @@ function EditProductSheet({
   const [editingOptionId, setEditingOptionId] = useState<string | null>(null);
   const [editOptionName, setEditOptionName] = useState("");
   const [editOptionDelta, setEditOptionDelta] = useState("");
+
+  const productBadges = (product as { badges?: ProductBadgeType[] })?.badges ?? [];
+
+  useEffect(() => {
+    if (product) setSelectedBadges(productBadges);
+  }, [product?._id, JSON.stringify(productBadges)]);
+
+  function toggleBadge(b: ProductBadgeType) {
+    setSelectedBadges((prev) =>
+      prev.includes(b) ? prev.filter((x) => x !== b) : [...prev, b]
+    );
+  }
 
   // Initialize fields when product loads
   if (product && !fields) {
@@ -250,6 +263,7 @@ function EditProductSheet({
         leadTimeHoursOverride: Number(fields.leadTimeHoursOverride) || undefined,
         inStockToday: Boolean(fields.inStockToday),
         maxQtyPerOrder: Number(fields.maxQtyPerOrder) || undefined,
+        badges: selectedBadges,
         shapeImages:
           shapeImages && Object.values(shapeImages).some((arr) => arr.length > 0)
             ? {
@@ -552,6 +566,28 @@ function EditProductSheet({
                         onChange={(e) => updateField("tagsCsv", e.target.value)}
                       />
                     </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Fun badges</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {(["popular", "new_flavor", "best_seller"] as const).map((b) => {
+                        const on = selectedBadges.includes(b);
+                        return (
+                          <button
+                            key={b}
+                            type="button"
+                            onClick={() => toggleBadge(b)}
+                            className={`cursor-pointer rounded-lg border-2 px-3 py-1.5 transition ${
+                              on ? "border-primary bg-primary/5" : "border-dashed border-muted-foreground/40 opacity-70 hover:opacity-100"
+                            }`}
+                          >
+                            <ProductBadge badge={b} className={on ? "" : "opacity-60"} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Click to toggle. Shows on product cards and detail page.</p>
                   </div>
 
                   <div className="flex flex-wrap gap-4">
@@ -1297,8 +1333,8 @@ export default function AdminProductsPage() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6">
-      <header className="space-y-2">
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8">
+      <header className="space-y-2 pb-1">
         <h1 className="text-2xl font-semibold tracking-tight">Admin Catalog Manager</h1>
         <p className="text-sm text-muted-foreground">
           Manage products, variants, modifier groups, and modifier options.
@@ -1313,50 +1349,42 @@ export default function AdminProductsPage() {
       <section className="flex flex-col gap-6">
         {/* ── Products List (top) ── */}
         <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between gap-4">
+          <CardHeader className="p-4 sm:p-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <CardTitle>Products</CardTitle>
                 <CardDescription>Click Edit to manage product details, variants, and modifiers</CardDescription>
               </div>
-              <Button variant="outline" size="sm" asChild>
+              <Button variant="outline" size="sm" asChild className="w-fit shrink-0">
                 <Link href="/admin/products/images">Bulk edit images</Link>
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-3 p-4 sm:p-6 sm:pt-0">
             {sortedProducts.map((product) => (
-              <div key={product._id} className="flex items-center gap-3 rounded-md border p-3">
-                <div className="h-12 w-12 shrink-0 overflow-hidden rounded">
-                  <ProductImage
-                    images={product.images}
-                    name={product.name}
-                    className="h-full w-full object-cover"
-                  />
+              <div key={product._id} className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:gap-3">
+                <div className="flex min-w-0 items-center gap-3 sm:flex-1">
+                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded">
+                    <ProductImage
+                      images={product.images}
+                      name={product.name}
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium truncate">
+                      {productDisplayName(product.name)}
+                      <span className="ml-2 text-muted-foreground font-normal">
+                        ${centsToDollars(product.basePriceCents)}
+                      </span>
+                    </p>
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1 space-y-1">
-                  <p className="font-medium">{productDisplayName(product.name)}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {product.productCode ? (
-                      <>Code: {product.productCode} &middot; </>
-                    ) : null}
-                    {product.slug} &middot; ${centsToDollars(product.basePriceCents)}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Badge variant={product.status === "active" ? "default" : "outline"}>
-                    {product.status}
-                  </Badge>
+                <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
                   <Button
                     size="sm"
-                    variant="outline"
-                    onClick={() => setEditingProductId(product._id)}
-                  >
-                    <Pencil className="mr-1 size-3.5" /> Edit
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
+                    variant={product.status === "active" ? "default" : "outline"}
+                    className="min-w-[4.5rem]"
                     onClick={async () => {
                       await updateProduct({
                         productId: product._id,
@@ -1364,7 +1392,27 @@ export default function AdminProductsPage() {
                       });
                     }}
                   >
-                    Toggle
+                    {product.status === "active" ? "Active" : "Hidden"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={product.inStockToday ? "secondary" : "outline"}
+                    className="min-w-[5rem]"
+                    onClick={async () => {
+                      await updateProduct({
+                        productId: product._id,
+                        inStockToday: !product.inStockToday,
+                      });
+                    }}
+                  >
+                    {product.inStockToday ? "Available today" : "Future"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setEditingProductId(product._id)}
+                  >
+                    <Pencil className="mr-1 size-3.5" /> Edit
                   </Button>
                   <Button
                     size="sm"
@@ -1383,11 +1431,11 @@ export default function AdminProductsPage() {
 
         {/* ── Create Product (bottom) ── */}
         <Card>
-          <CardHeader>
+          <CardHeader className="p-4 sm:p-6">
             <CardTitle>Create Product</CardTitle>
             <CardDescription>Add a new product to the catalog</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-4 sm:p-6 sm:pt-0">
             <form className="space-y-4" onSubmit={productForm.handleSubmit(onCreateProduct)}>
               <div className="space-y-2">
                 <Label htmlFor="name">Name</Label>
@@ -1405,7 +1453,7 @@ export default function AdminProductsPage() {
                 <Label htmlFor="description">Description</Label>
                 <Textarea id="description" {...productForm.register("description")} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="basePrice">Base price ($)</Label>
                   <Input id="basePrice" type="number" step="0.01" {...productForm.register("basePrice")} />
@@ -1473,7 +1521,7 @@ export default function AdminProductsPage() {
                 <Label htmlFor="tagsCsv">Tags CSV</Label>
                 <Input id="tagsCsv" placeholder="chocolate,featured" {...productForm.register("tagsCsv")} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" {...productForm.register("inStockToday")} />
                   In stock today

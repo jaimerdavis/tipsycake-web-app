@@ -78,6 +78,10 @@ export default defineSchema({
     leadTimeHoursOverride: v.optional(v.number()),
     inStockToday: v.boolean(),
     maxQtyPerOrder: v.optional(v.number()),
+    /** Fun badges: "popular" (light green), "new_flavor" (yellow), "best_seller" (red) */
+    badges: v.optional(
+      v.array(v.union(v.literal("popular"), v.literal("new_flavor"), v.literal("best_seller")))
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -329,6 +333,7 @@ export default defineSchema({
     guestToken: v.string(),
     status: v.string(),
     contactEmail: v.optional(v.string()),
+    contactName: v.optional(v.string()),
     contactPhone: v.optional(v.string()),
     fulfillmentMode: v.union(v.literal("pickup"), v.literal("delivery"), v.literal("shipping")),
     addressId: v.optional(v.id("addresses")),
@@ -360,6 +365,7 @@ export default defineSchema({
     .index("by_guestToken", ["guestToken"])
     .index("by_userId", ["userId"])
     .index("by_contactEmail", ["contactEmail"])
+    .index("by_contactEmail_createdAt", ["contactEmail", "createdAt"])
     .index("by_status", ["status"])
     .index("by_paymentIntentId", ["paymentIntentId"])
     .index("by_paypalOrderId", ["paypalOrderId"])
@@ -519,6 +525,26 @@ export default defineSchema({
     value: v.string(),
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
+
+  emailBlasts: defineTable({
+    subject: v.string(),
+    bodyHtml: v.string(),
+    lastOrderWithinDays: v.optional(v.number()),
+    isTest: v.optional(v.boolean()),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("sending"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    totalRecipients: v.number(),
+    sentCount: v.number(),
+    actorId: v.string(),
+    createdAt: v.number(),
+    completedAt: v.optional(v.number()),
+  })
+    .index("by_createdAt", ["createdAt"])
+    .index("by_status", ["status"]),
 
   notificationLogs: defineTable({
     channel: v.union(v.literal("email"), v.literal("sms")),

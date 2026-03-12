@@ -370,6 +370,15 @@ Build a mobile-first web app that provides a smooth checkout experience and supp
 
 **NTF-003** Internal notifications optional.
 
+**NTF-004** Email blast (admin-only):
+
+* UI under Admin → Email Settings → Email Blast
+* Select recipients: all customers (by order contactEmail) or optional filters (last order within X days)
+* Compose subject + HTML body
+* Optional: attach existing coupon code to encourage sales (paste code in body or pick from list)
+* Batched send via notifications pipeline; logged to notificationLogs
+* Blast history recorded for audit (ADM-003)
+
 ---
 
 ### 5.10 Abandoned cart (ABD)

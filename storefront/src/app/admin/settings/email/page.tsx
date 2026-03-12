@@ -10,12 +10,38 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
 const EMAIL_ABANDONED_KEYS = [
   "emailAbandonedCartIncentiveEnabled",
   "emailAbandonedCartCouponCents",
   "emailAbandonedCartCouponExpiryHours",
+] as const;
+
+const ORDER_REMINDER_KEYS = [
+  "orderReminderEnabled",
+  "orderReminderFirstHours",
+  "orderReminderSecondHours",
+] as const;
+
+const EMAIL_LOG_TEMPLATES = [
+  { value: "all", label: "All types" },
+  { value: "email_blast", label: "Email blast" },
+  { value: "abandoned", label: "Abandoned cart" },
+  { value: "orderConfirmation", label: "Order confirmation" },
+  { value: "ownerNotification", label: "Owner notification" },
+  { value: "ownerOrderComplete", label: "Owner order complete" },
+  { value: "ownerOrderReminder", label: "Owner order reminder" },
+  { value: "statusUpdate", label: "Status update" },
+  { value: "paymentFailed", label: "Payment failed" },
+  { value: "other", label: "Other" },
 ] as const;
 
 function formatTime(ts: number) {
@@ -42,6 +68,7 @@ export default function EmailSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [testEmailSending, setTestEmailSending] = useState<string | null>(null);
+  const [logTemplateFilter, setLogTemplateFilter] = useState<string>("all");
   const templateSyncedRef = useRef(false);
 
   useEffect(() => {
@@ -84,7 +111,8 @@ export default function EmailSettingsPage() {
       const isEmailKey = (k: string) =>
         isTemplateKey(k) ||
         k === "notifyOwnerOnOrder" ||
-        EMAIL_ABANDONED_KEYS.includes(k as (typeof EMAIL_ABANDONED_KEYS)[number]);
+        EMAIL_ABANDONED_KEYS.includes(k as (typeof EMAIL_ABANDONED_KEYS)[number]) ||
+        ORDER_REMINDER_KEYS.includes(k as (typeof ORDER_REMINDER_KEYS)[number]);
       const entries = Object.entries(form)
         .filter(
           ([key, value]) =>
@@ -111,8 +139,14 @@ export default function EmailSettingsPage() {
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight">Email Settings</h1>
         <p className="text-sm text-muted-foreground">
-          Email templates, abandoned cart incentives, and email logs.
+          Email templates, abandoned cart incentives, email blast, and email logs.
         </p>
+        <Link
+          href="/admin/settings/email/blast"
+          className="text-sm text-primary hover:underline"
+        >
+          → Email Blast
+        </Link>
         {message && <Badge variant="secondary">{message}</Badge>}
       </header>
 
@@ -136,6 +170,61 @@ export default function EmailSettingsPage() {
             <Label htmlFor="notifyOwnerOnOrder" className="cursor-pointer font-normal">
               Email store owner when a new order is placed (uses Store Email from main Settings)
             </Label>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Order Status Reminders ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Order Status Reminders</CardTitle>
+          <CardDescription>
+            When an order has no status update for a while, email the store owner to update it. Runs every 15 minutes.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="orderReminderEnabled"
+              checked={(form.orderReminderEnabled ?? "true") !== "false"}
+              onChange={(e) =>
+                updateField("orderReminderEnabled", e.target.checked ? "true" : "false")
+              }
+              className="h-4 w-4 rounded border-input"
+            />
+            <Label htmlFor="orderReminderEnabled" className="cursor-pointer font-normal">
+              Send reminder emails when orders are stuck without status updates
+            </Label>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="orderReminderFirstHours">First reminder (hours)</Label>
+              <Input
+                id="orderReminderFirstHours"
+                type="number"
+                min={0.5}
+                step={0.5}
+                max={24}
+                value={form.orderReminderFirstHours ?? "1"}
+                onChange={(e) => updateField("orderReminderFirstHours", e.target.value)}
+                placeholder="1"
+              />
+              <p className="text-xs text-muted-foreground">0.5–24 hours (1 = 1 hour)</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="orderReminderSecondHours">Second reminder (hours)</Label>
+              <Input
+                id="orderReminderSecondHours"
+                type="number"
+                min={1}
+                max={72}
+                value={form.orderReminderSecondHours ?? "2"}
+                onChange={(e) => updateField("orderReminderSecondHours", e.target.value)}
+                placeholder="2"
+              />
+              <p className="text-xs text-muted-foreground">Must be after first (2 = 2 hours)</p>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -287,68 +376,144 @@ export default function EmailSettingsPage() {
         <CardHeader>
           <CardTitle>Email Logs</CardTitle>
           <CardDescription>
-            Sent (with Postmark Message ID), skipped (no Postmark), or error.
+            Sent (Postmark Message ID), skipped (no Postmark), or error. Each log shows when it was
+            sent and the provider response.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           {emailLogs === undefined ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
-          ) : emailLogs.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No email logs yet.</p>
           ) : (
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {emailLogs.map((log) => (
-                <div
-                  key={log._id}
-                  className="flex flex-col gap-1.5 rounded border bg-muted/30 px-3 py-2.5 text-sm"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2 min-w-0">
-                      <Badge
-                        variant={
-                          log.status === "error"
-                            ? "destructive"
-                            : log.status === "skipped"
-                              ? "secondary"
-                              : "default"
-                        }
-                        className="capitalize shrink-0"
+            <>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="log-template-filter" className="text-xs font-medium">
+                  Filter by type
+                </Label>
+                <Select value={logTemplateFilter} onValueChange={setLogTemplateFilter}>
+                  <SelectTrigger id="log-template-filter" className="w-48">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EMAIL_LOG_TEMPLATES.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>
+                        {t.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {(() => {
+                const knownTemplates = [
+                  "email_blast",
+                  "abandoned_cart",
+                  "abandonedCart",
+                  "orderConfirmation",
+                  "ownerNotification",
+                  "ownerOrderComplete",
+                  "ownerOrderReminder",
+                  "statusUpdate",
+                  "paymentFailed",
+                ];
+                const filtered =
+                  logTemplateFilter === "all"
+                    ? emailLogs
+                    : logTemplateFilter === "other"
+                      ? emailLogs.filter(
+                          (l) => !l.template || !knownTemplates.includes(l.template)
+                        )
+                      : logTemplateFilter === "abandoned"
+                        ? emailLogs.filter(
+                            (l) =>
+                              l.template === "abandoned_cart" ||
+                              l.template === "abandonedCart"
+                          )
+                        : emailLogs.filter((l) => l.template === logTemplateFilter);
+                if (filtered.length === 0) {
+                  return (
+                    <p className="text-sm text-muted-foreground">
+                      No email logs
+                      {logTemplateFilter !== "all" ? ` for ${EMAIL_LOG_TEMPLATES.find((t) => t.value === logTemplateFilter)?.label ?? logTemplateFilter}` : ""}.
+                    </p>
+                  );
+                }
+                return (
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {filtered.map((log) => (
+                      <div
+                        key={log._id}
+                        className="flex flex-col gap-2 rounded-lg border bg-muted/30 px-3 py-3 text-sm"
                       >
-                        {log.status}
-                      </Badge>
-                      {log.template && (
-                        <span className="text-muted-foreground truncate">{log.template}</span>
-                      )}
-                      {log.orderNumber && (
-                        <span className="text-muted-foreground">#{log.orderNumber}</span>
-                      )}
-                    </div>
-                    <span className="text-xs text-muted-foreground shrink-0">
-                      {formatTime(log.createdAt)}
-                    </span>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2 min-w-0">
+                            <Badge
+                              variant={
+                                log.status === "error"
+                                  ? "destructive"
+                                  : log.status === "skipped"
+                                    ? "secondary"
+                                    : "default"
+                              }
+                              className="capitalize shrink-0"
+                            >
+                              {log.status}
+                            </Badge>
+                            {log.template && (
+                              <Badge variant="outline" className="shrink-0 font-normal">
+                                {log.template.replace(/_/g, " ")}
+                              </Badge>
+                            )}
+                            {log.orderNumber && (
+                              <span className="text-muted-foreground">#{log.orderNumber}</span>
+                            )}
+                          </div>
+                          <span className="shrink-0 text-xs font-medium">
+                            Sent at {formatTime(log.createdAt)}
+                          </span>
+                        </div>
+                        <div className="grid gap-1 text-xs">
+                          <div className="min-w-0">
+                            <span className="text-muted-foreground">To: </span>
+                            <span className="truncate">{log.to}</span>
+                            {log.subject != null && (
+                              <>
+                                <span className="text-muted-foreground"> · </span>
+                                <span className="truncate">{log.subject}</span>
+                              </>
+                            )}
+                          </div>
+                          {log.bodyPreview != null && (
+                            <p className="truncate italic text-muted-foreground">
+                              &quot;{log.bodyPreview}&quot;
+                            </p>
+                          )}
+                          <div className="pt-1 space-y-0.5">
+                            {log.status === "sent" && log.externalId != null && (
+                              <p>
+                                <span className="text-muted-foreground">Response: </span>
+                                <span className="font-mono text-green-700 dark:text-green-400">
+                                  Postmark ID {log.externalId}
+                                </span>
+                              </p>
+                            )}
+                            {log.status === "skipped" && (
+                              <p className="text-muted-foreground">
+                                Response: Skipped (Postmark not configured)
+                              </p>
+                            )}
+                            {log.errorMessage != null && (
+                              <p>
+                                <span className="text-muted-foreground">Response: </span>
+                                <span className="text-destructive">{log.errorMessage}</span>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  <div className="flex flex-col gap-0.5 min-w-0">
-                    <span className="truncate text-muted-foreground">
-                      To: {log.to}
-                      {log.subject != null && <> · {log.subject}</>}
-                    </span>
-                    {log.bodyPreview != null && (
-                      <span className="truncate text-xs text-muted-foreground italic">
-                        &quot;{log.bodyPreview}&quot;
-                      </span>
-                    )}
-                    {log.status === "sent" && log.externalId != null && (
-                      <span className="text-xs text-green-700 dark:text-green-400 font-mono">
-                        Postmark ID: {log.externalId}
-                      </span>
-                    )}
-                    {log.errorMessage != null && (
-                      <span className="text-destructive text-xs">{log.errorMessage}</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+                );
+              })()}
+            </>
           )}
         </CardContent>
       </Card>

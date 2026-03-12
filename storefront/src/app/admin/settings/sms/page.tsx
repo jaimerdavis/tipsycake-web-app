@@ -21,14 +21,34 @@ function formatTime(ts: number) {
 }
 
 export default function SmsSettingsPage() {
+  const settings = useQuery(api.admin.settings.getAll);
   const smsLogs = useQuery(api.admin.notificationLogs.list, {
     channel: "sms",
     limit: 50,
   });
   const sendTestSms = useMutation(api.admin.settings.sendTestSms);
+  const setBatch = useMutation(api.admin.settings.setBatch);
 
   const [message, setMessage] = useState<string | null>(null);
   const [testSmsSending, setTestSmsSending] = useState(false);
+  const [toggling, setToggling] = useState(false);
+
+  const smsEnabled = settings?.smsEnabled !== "false";
+
+  const handleToggleSms = async () => {
+    setToggling(true);
+    setMessage(null);
+    try {
+      await setBatch({
+        entries: [{ key: "smsEnabled", value: smsEnabled ? "false" : "true" }],
+      });
+      setMessage(smsEnabled ? "SMS disabled. No notifications will be sent." : "SMS enabled.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Failed to update");
+    } finally {
+      setToggling(false);
+    }
+  };
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6">
@@ -46,13 +66,35 @@ export default function SmsSettingsPage() {
         {message && <Badge variant="secondary">{message}</Badge>}
       </header>
 
-      {/* ── Test SMS ── */}
+      {/* ── Enable/Disable SMS ── */}
       <Card>
+        <CardHeader>
+          <CardTitle>SMS Notifications</CardTitle>
+          <CardDescription>
+            {smsEnabled
+              ? "SMS is enabled. Order status updates, abandoned cart reminders, and owner alerts will be sent via text."
+              : "SMS is disabled. No text messages will be sent anywhere in the app."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button
+            variant={smsEnabled ? "destructive" : "default"}
+            disabled={toggling}
+            onClick={handleToggleSms}
+          >
+            {toggling ? "Updating…" : smsEnabled ? "Disable SMS everywhere" : "Enable SMS"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* ── Test SMS ── */}
+      <Card className={!smsEnabled ? "opacity-60" : ""}>
         <CardHeader>
           <CardTitle>Test SMS</CardTitle>
           <CardDescription>
-            Send a test SMS to verify Twilio. Use E.164 format (e.g. +15551234567) or 10-digit US number.
-            Store Phone is in Settings.
+            {smsEnabled
+              ? "Send a test SMS to verify Twilio. Use E.164 format (e.g. +15551234567) or 10-digit US number. Store Phone is in Settings."
+              : "Enable SMS above to send test messages."}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-end gap-2">
@@ -63,11 +105,12 @@ export default function SmsSettingsPage() {
               type="tel"
               placeholder="+15551234567 or 5551234567"
               className="w-48 font-mono"
+              disabled={!smsEnabled}
             />
           </div>
           <Button
             variant="outline"
-            disabled={testSmsSending}
+            disabled={testSmsSending || !smsEnabled}
             onClick={async () => {
               const input = document.getElementById("test-sms-phone") as HTMLInputElement;
               const to = input?.value?.trim();

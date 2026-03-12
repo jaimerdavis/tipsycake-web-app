@@ -185,11 +185,8 @@ export const getSlots = query({
       globalLeadTimeHours: rules.globalLeadTimeHours,
       productLeadTimeHours: (rules.productLeadTimeHours ?? {}) as Record<string, number>,
     });
-    // Same-day pickup/delivery: fixed 5–6 PM slots, skip lead-time block (store manages capacity)
-    const earliestAllowed =
-      isSameDay && (args.mode === "pickup" || args.mode === "delivery")
-        ? new Date(targetDate.getTime() - 1) // any slot today passes
-        : new Date(now.getTime() + leadHours * 60 * 60 * 1000);
+    // Lead time: slot must be at least leadHours from now (e.g. 5 hours)
+    const earliestAllowed = new Date(now.getTime() + leadHours * 60 * 60 * 1000);
 
     const blackout = await ctx.db
       .query("blackoutDates")

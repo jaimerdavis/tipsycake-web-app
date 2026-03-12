@@ -32,12 +32,13 @@ export const seedAvailabilityRules = mutation({
         sunday: [],
       },
       cutoffTimes: {
-        monday: { pickup: "15:00", delivery: "14:00", shipping: "12:00" },
-        tuesday: { pickup: "15:00", delivery: "14:00", shipping: "12:00" },
-        wednesday: { pickup: "15:00", delivery: "14:00", shipping: "12:00" },
-        thursday: { pickup: "15:00", delivery: "14:00", shipping: "12:00" },
-        friday: { pickup: "15:00", delivery: "14:00", shipping: "12:00" },
-        saturday: { pickup: "12:00", delivery: "11:00", shipping: "10:00" },
+        // Same-day order cutoff: 12:15 PM EST (latest order for same-day 5:30/6 PM slots)
+        monday: { pickup: "12:15", delivery: "12:15", shipping: "12:00" },
+        tuesday: { pickup: "12:15", delivery: "12:15", shipping: "12:00" },
+        wednesday: { pickup: "12:15", delivery: "12:15", shipping: "12:00" },
+        thursday: { pickup: "12:15", delivery: "12:15", shipping: "12:00" },
+        friday: { pickup: "12:15", delivery: "12:15", shipping: "12:00" },
+        saturday: { pickup: "12:15", delivery: "12:15", shipping: "10:00" },
         sunday: {},
       },
       globalLeadTimeHours: 5,
@@ -74,6 +75,19 @@ export const seedAvailabilityRules = mutation({
     return { seeded: true, message: "Availability rules and delivery tiers created" };
   },
 });
+
+/** Extra products for historical import (Piña Colada, Create Your Own legacy). Run before import. */
+const IMPORT_PRODUCTS = [
+  { productCode: "CAKE-018", name: "Piña Colada Cake", slug: "pina-colada-cake", price: 55, inStock: false, status: "hidden" as const },
+  {
+    productCode: "CAKE-019",
+    name: "Create Your Own (Legacy)",
+    slug: "create-your-own-legacy",
+    price: 65,
+    inStock: false,
+    status: "hidden" as const,
+  },
+];
 
 const CAKES = [
   { productCode: "CAKE-001", name: "Lychee Martini Cake", slug: "lychee-martini-cake", price: 55, inStock: true },
@@ -144,6 +158,42 @@ export const seedCakes = mutation({
       });
     }
     return { seeded: true, message: `Added ${CAKES.length} cakes` };
+  },
+});
+
+/**
+ * Seed products needed for historical order import.
+ * Creates IMPORT_PRODUCTS + any missing CAKES. Run before importHistoricalOrders. Idempotent.
+ */
+export const seedImportProducts = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const products = await ctx.db.query("products").collect();
+    const existingSlugs = new Set(products.map((p) => p.slug));
+    const allProducts = [...IMPORT_PRODUCTS, ...CAKES];
+    const toCreate = allProducts.filter((c) => !existingSlugs.has(c.slug));
+    if (toCreate.length === 0) {
+      return { seeded: false, message: "All import products already exist" };
+    }
+    const now = Date.now();
+    for (const c of toCreate) {
+      await ctx.db.insert("products", {
+        productCode: c.productCode,
+        name: c.name,
+        slug: c.slug,
+        description: "",
+        images: [],
+        status: c.status ?? "active",
+        categories: ["cakes"],
+        tags: ["rum cakes", "tipsy cake"],
+        basePriceCents: c.price * 100,
+        fulfillmentFlags: { pickup: true, delivery: true, shipping: false },
+        inStockToday: c.inStock,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    return { seeded: true, message: `Added ${toCreate.length} import product(s)` };
   },
 });
 
@@ -434,6 +484,89 @@ export const backfillProductCodes = mutation({
 });
 
 /**
+ * Copy images + shapeImages from "Red Velvet Hennessy Cake" to Red Velvet Baileys and Red Velvet Rum.
+ * Run: npx convex run seed:copyRedVelvetHennessyImages
+ */
+export const copyRedVelvetHennessyImages = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const TARGET_NAMES = [
+      "Red Velvet Baileys Cake",
+      "Red Velvet Rum Cake",
+    ];
+
+    const all = await ctx.db.query("products").collect();
+    const source = all.find((p) =>
+      p.name.toLowerCase().includes("red velvet hennessy")
+    );
+
+    if (!source) {
+      return { ok: false, message: "Red Velvet Hennessy Cake not found" };
+    }
+
+    const updated: string[] = [];
+    for (const product of all) {
+      if (TARGET_NAMES.some((n) => product.name.toLowerCase() === n.toLowerCase())) {
+        const now = Date.now();
+        await ctx.db.patch(product._id, {
+          images: source.images,
+          shapeImages: source.shapeImages,
+          updatedAt: now,
+        });
+        updated.push(product.name);
+      }
+    }
+
+    return {
+      ok: true,
+      source: source.name,
+      updated,
+      message: `Copied to ${updated.length} product(s): ${updated.join(", ")}`,
+    };
+  },
+});
+
+/**
+ * Copy images + shapeImages from "Spice Rum Cake" to Rum Raisin Cake.
+ * Run: npx convex run seed:copySpiceRumImages
+ */
+export const copySpiceRumImages = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const TARGET_NAMES = ["Rum Raisin Cake"];
+
+    const all = await ctx.db.query("products").collect();
+    const source = all.find((p) =>
+      p.name.toLowerCase().includes("spice rum")
+    );
+
+    if (!source) {
+      return { ok: false, message: "Spice Rum Cake not found" };
+    }
+
+    const updated: string[] = [];
+    for (const product of all) {
+      if (TARGET_NAMES.some((n) => product.name.toLowerCase() === n.toLowerCase())) {
+        const now = Date.now();
+        await ctx.db.patch(product._id, {
+          images: source.images,
+          shapeImages: source.shapeImages,
+          updatedAt: now,
+        });
+        updated.push(product.name);
+      }
+    }
+
+    return {
+      ok: true,
+      source: source.name,
+      updated,
+      message: `Copied to ${updated.length} product(s): ${updated.join(", ")}`,
+    };
+  },
+});
+
+/**
  * Copy images + shapeImages from "Chocolate Hennessy Cake" to Chocolate Baileys and Chocolate Rum.
  * Run: npx convex run seed:copyChocolateHennessyImages
  */
@@ -480,6 +613,21 @@ export const copyChocolateHennessyImages = mutation({
  * Set maxQtyPerOrder to 10 for all products.
  * Run: npx convex run seed:setMaxQtyTo10
  */
+/**
+ * Set Piña Colada Cake to inactive (hidden). Run after import if it was seeded active.
+ */
+export const setPinaColadaInactive = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const products = await ctx.db.query("products").collect();
+    const pina = products.find((p) => p.slug === "pina-colada-cake");
+    if (!pina) return { ok: false, message: "Piña Colada not found" };
+    const now = Date.now();
+    await ctx.db.patch(pina._id, { status: "hidden", inStockToday: false, updatedAt: now });
+    return { ok: true, message: "Piña Colada set to inactive" };
+  },
+});
+
 export const setMaxQtyTo10 = mutation({
   args: {},
   handler: async (ctx) => {
@@ -493,5 +641,59 @@ export const setMaxQtyTo10 = mutation({
       }
     }
     return { ok: true, updated, total: products.length };
+  },
+});
+
+/**
+ * Attach fun badges to products. Run: npx convex run seed:seedProductBadges
+ * Popular (green): Chocolate Baileys
+ * New Flavor (yellow): Lychee Martini, Red Velvet Hennessy, Chocolate Hennessy, Vanilla Hennessy
+ * Best Seller (red): Buttery Nipple, Jamaican Fruit Cake (closest to Appleton rum)
+ */
+export const seedProductBadges = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const products = await ctx.db.query("products").collect();
+    const now = Date.now();
+
+    const popular = ["Chocolate Baileys Cake"];
+    const newFlavor = [
+      "Lychee Martini Cake",
+      "Red Velvet Hennessy Cake",
+      "Chocolate Hennessy Cake",
+      "Vanilla Hennessy Cake",
+    ];
+    const bestSeller = ["Buttery Nipple Cake", "Jamaican Fruit Cake"];
+
+    const nameToId = new Map(products.map((p) => [p.name.toLowerCase(), p._id]));
+    let updated = 0;
+
+    for (const name of popular) {
+      const id = nameToId.get(name.toLowerCase());
+      if (id) {
+        await ctx.db.patch(id, { badges: ["popular" as const], updatedAt: now });
+        updated++;
+      }
+    }
+    for (const name of newFlavor) {
+      const id = nameToId.get(name.toLowerCase());
+      if (id) {
+        await ctx.db.patch(id, { badges: ["new_flavor" as const], updatedAt: now });
+        updated++;
+      }
+    }
+    for (const name of bestSeller) {
+      const id = nameToId.get(name.toLowerCase());
+      if (id) {
+        await ctx.db.patch(id, { badges: ["best_seller" as const], updatedAt: now });
+        updated++;
+      }
+    }
+
+    return {
+      ok: true,
+      updated,
+      message: `Badges set on ${updated} product(s)`,
+    };
   },
 });

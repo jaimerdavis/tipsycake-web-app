@@ -404,7 +404,13 @@ export const applyCoupon = mutation({
     code: v.string(),
   },
   handler: async (ctx, args) => {
-    const normalized = args.code.trim().toUpperCase();
+    const normalizeCode = (s: string) =>
+      s
+        .replace(/[\u2013\u2014\u2015]/g, "-")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toUpperCase();
+    const normalized = normalizeCode(args.code);
     if (!normalized) {
       throw new Error("Coupon code is required");
     }
@@ -412,12 +418,23 @@ export const applyCoupon = mutation({
     const cart = await ctx.db.get(args.cartId);
     if (!cart) throw new Error("Cart not found");
 
-    const coupon = await ctx.db
+    let coupon = await ctx.db
       .query("coupons")
       .withIndex("by_code", (q) => q.eq("code", normalized))
       .unique();
-    if (!coupon || !coupon.enabled) {
+
+    // Fallback: case-insensitive match for coupons stored with different casing or unicode (seed, dashboard, import, copy-paste)
+    if (!coupon) {
+      const all = await ctx.db.query("coupons").collect();
+      coupon =
+        all.find((c) => normalizeCode(c.code) === normalized) ?? null;
+    }
+
+    if (!coupon) {
       throw new Error("Coupon is invalid");
+    }
+    if (!coupon.enabled) {
+      throw new Error("This coupon is no longer active");
     }
     if (coupon.expiresAt && coupon.expiresAt <= Date.now()) {
       throw new Error("Coupon expired");
@@ -605,5 +622,49 @@ export const convertGuestCartToUser = mutation({
       status: "abandoned",
       updatedAt: now,
     });
+  },
+});
+
+/** Restore an abandoned cart when user clicks the link from abandoned cart email/SMS. */
+export const restoreAbandonedCart = mutation({
+  args: {
+    cartId: v.id("carts"),
+    guestSessionId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const cart = await ctx.db.get(args.cartId);
+    if (!cart) throw new Error("Cart not found");
+    if (cart.status !== "abandoned") throw new Error("This cart cannot be restored");
+
+    let ownerType: "guest" | "user";
+    let ownerId: string;
+    try {
+      const owner = await resolveOwner(ctx, args.guestSessionId ?? undefined);
+      ownerType = owner.ownerType;
+      ownerId = owner.ownerId;
+    } catch {
+      throw new Error("Session required to restore cart. Please try again.");
+    }
+
+    const now = Date.now();
+    const existingActive = await ctx.db
+      .query("carts")
+      .withIndex("by_owner_status", (q) =>
+        q.eq("ownerType", ownerType).eq("ownerId", ownerId).eq("status", "active")
+      )
+      .unique();
+
+    if (existingActive && existingActive._id !== args.cartId) {
+      await ctx.db.patch(existingActive._id, { status: "abandoned", updatedAt: now });
+    }
+
+    await ctx.db.patch(args.cartId, {
+      status: "active",
+      ownerType,
+      ownerId,
+      updatedAt: now,
+    });
+
+    return args.cartId;
   },
 });

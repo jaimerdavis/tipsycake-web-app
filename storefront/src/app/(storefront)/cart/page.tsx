@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 
+import type { Id } from "../../../../convex/_generated/dataModel";
 import { api } from "../../../../convex/_generated/api";
 import {
   AlertDialog,
@@ -27,6 +29,8 @@ import { getOrCreateGuestSessionId } from "@/lib/guestSession";
 import { productDisplayName } from "@/lib/utils";
 
 export default function CartPage() {
+  const searchParams = useSearchParams();
+  const restoreCartId = searchParams.get("restore");
   const [guestSessionId, setGuestSessionId] = useState("");
   useEffect(() => {
     setGuestSessionId(getOrCreateGuestSessionId());
@@ -34,6 +38,20 @@ export default function CartPage() {
   const [couponCode, setCouponCode] = useState("");
   const [couponMessage, setCouponMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [tipInput, setTipInput] = useState("0.00");
+
+  const restoreAbandonedCart = useMutation(api.cart.restoreAbandonedCart);
+
+  useEffect(() => {
+    if (!restoreCartId || !guestSessionId) return;
+    restoreAbandonedCart({
+      cartId: restoreCartId as Id<"carts">,
+      guestSessionId,
+    })
+      .then(() => {
+        window.history.replaceState({}, "", "/cart");
+      })
+      .catch(() => {});
+  }, [restoreCartId, guestSessionId, restoreAbandonedCart]);
 
   const cart = useQuery(
     api.cart.getActive,

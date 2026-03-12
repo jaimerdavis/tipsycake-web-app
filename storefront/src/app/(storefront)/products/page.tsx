@@ -9,6 +9,7 @@ import { api } from "../../../../convex/_generated/api";
 import { FulfillmentBar } from "@/components/FulfillmentBar";
 import { ProductImage } from "@/components/ProductImage";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
+import { ProductBadges } from "@/components/ProductBadge";
 import { productDisplayName } from "@/lib/utils";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,7 +38,6 @@ export default function ProductsPage() {
   const setFulfillment = useMutation(api.checkout.setFulfillment);
 
   const settings = useSiteSettings();
-  const heroImageUrl = settings.get("heroImageUrl")?.trim();
   const menuTextUs = settings.get("contentMenuTextUs")?.trim() ?? "";
   const storePhone = settings.get("storePhone")?.trim();
   const smsHref = storePhone
@@ -86,21 +86,6 @@ export default function ProductsPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-rose-100/70 via-stone-50/80 to-white pb-28 sm:pb-safe">
-      {/* Hero image — flows from top, seamless fade into content */}
-      {heroImageUrl ? (
-        <div className="relative -mb-4 h-40 w-full overflow-hidden sm:h-52 md:h-60">
-          <img
-            src={heroImageUrl}
-            alt=""
-            className="h-full w-full object-cover object-center"
-          />
-          <div
-            className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-rose-100/90 via-rose-50/50 to-transparent sm:h-24"
-            aria-hidden
-          />
-        </div>
-      ) : null}
-
       <div className="mx-auto flex max-w-6xl flex-col gap-4 px-3 py-4 sm:gap-6 sm:px-6 sm:py-6">
         {/* Fulfillment selector bar — compact, not full width on desktop */}
         <div className="w-full sm:mx-auto sm:max-w-sm">
@@ -125,7 +110,8 @@ export default function ProductsPage() {
                 )}
               >
                 <Link href={`/products/${product._id}`} className="flex flex-1 flex-col">
-                  <div className="p-3 sm:p-4">
+                    <div className="relative p-3 sm:p-4">
+                    <ProductBadges badges={(product as { badges?: string[] }).badges} className="absolute left-4 top-4 z-10" />
                     <div className="relative aspect-[4/3] overflow-hidden rounded-lg bg-gradient-to-br from-rose-100/50 via-stone-100/90 to-amber-100/30 p-2 sm:p-3">
                       <ProductImage
                       images={product.images}
