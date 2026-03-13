@@ -437,22 +437,6 @@ function CheckoutContent() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const autoSelectedSlotRef = useRef<string | null>(null);
 
-  // Auto-select first available slot when slots load (avoids "no slot selected" flow)
-  useEffect(() => {
-    if (!slots?.available?.length || slots.selectedSlotKey || !cart) return;
-    const firstKey = slots.available[0].slotKey;
-    if (autoSelectedSlotRef.current === firstKey) return;
-    autoSelectedSlotRef.current = firstKey;
-    createHold({ cartId: cart._id, slotKey: firstKey }).catch(() => {
-      autoSelectedSlotRef.current = null;
-    });
-  }, [slots?.available, slots?.selectedSlotKey, cart, createHold]);
-
-  // Reset auto-select ref when date changes so we can auto-select for new date
-  useEffect(() => {
-    autoSelectedSlotRef.current = null;
-  }, [selectedDate]);
-
   // Auto-select today when it's the first available date (so slots show without extra click)
   useEffect(() => {
     if (selectedDate || !availableDates?.length) return;
@@ -479,6 +463,22 @@ function CheckoutContent() {
         }
       : "skip"
   );
+
+  // Auto-select first available slot when slots load (avoids "no slot selected" flow)
+  useEffect(() => {
+    if (!slots?.available?.length || slots.selectedSlotKey || !cart) return;
+    const firstKey = slots.available[0].slotKey;
+    if (autoSelectedSlotRef.current === firstKey) return;
+    autoSelectedSlotRef.current = firstKey;
+    createHold({ cartId: cart._id, slotKey: firstKey }).catch(() => {
+      autoSelectedSlotRef.current = null;
+    });
+  }, [slots?.available, slots?.selectedSlotKey, cart, createHold]);
+
+  // Reset auto-select ref when date changes so we can auto-select for new date
+  useEffect(() => {
+    autoSelectedSlotRef.current = null;
+  }, [selectedDate]);
 
   // Show order confirmation when: (a) returning from Stripe redirect with success params, or
   // (b) payment completed in-page (Stripe no-redirect or $0 free order) and cart was cleared
@@ -522,8 +522,7 @@ function CheckoutContent() {
             <div className="space-y-3">
               <SignUpButton mode="modal" forceRedirectUrl="/checkout">
                 <Button className="w-full rounded-full bg-button text-stone-50 hover:bg-button-hover">
-                  <span className="sm:hidden">Create a FREE Account</span>
-                  <span className="hidden sm:inline">Create Account — Track orders and get exclusive offers</span>
+                  Create a FREE Account
                 </Button>
               </SignUpButton>
               <div className="space-y-2">
