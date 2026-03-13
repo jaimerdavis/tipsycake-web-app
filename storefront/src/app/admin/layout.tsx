@@ -11,7 +11,6 @@ import { useSiteSettings } from "@/hooks/useSiteSettings";
 
 const navItems = [
   { href: "/admin/orders", label: "Orders" },
-  { href: "/admin/abandoned-carts", label: "Abandoned Carts" },
   { href: "/admin/customers", label: "Customers" },
   { href: "/admin/products", label: "Products" },
   { href: "/admin/modifiers", label: "Store Modifiers" },

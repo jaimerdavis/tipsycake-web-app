@@ -43,7 +43,7 @@ import {
   getPreferredFulfillment,
 } from "@/lib/fulfillmentPreference";
 import { toast } from "sonner";
-import { productDisplayName } from "@/lib/utils";
+import { extractCouponErrorMessage, productDisplayName } from "@/lib/utils";
 
 function fmt(cents: number) {
   return `$${(cents / 100).toFixed(2)}`;
@@ -65,6 +65,51 @@ function formatSlotTime(hm: string): string {
   const hour = h % 12 || 12;
   const ampm = h < 12 ? "AM" : "PM";
   return m === 0 ? `${hour}${ampm}` : `${hour}:${String(m).padStart(2, "0")}${ampm}`;
+}
+
+function formatSecondsAsCountdown(secs: number): string {
+  if (secs <= 0) return "0s";
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const parts: string[] = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0 || h > 0) parts.push(`${m}m`);
+  parts.push(`${s}s`);
+  return parts.join(" ");
+}
+
+function SameDayCutoffTimer({
+  initialMinutes,
+  cutoffTime,
+}: {
+  initialMinutes: number;
+  cutoffTime?: string;
+}) {
+  const [secondsLeft, setSecondsLeft] = useState(initialMinutes * 60);
+
+  useEffect(() => {
+    setSecondsLeft(initialMinutes * 60);
+  }, [initialMinutes]);
+
+  useEffect(() => {
+    if (secondsLeft <= 0) return;
+    const id = setInterval(() => {
+      setSecondsLeft((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [secondsLeft]);
+
+  const cutoffLabel = cutoffTime
+    ? ` (Order by ${formatSlotTime(cutoffTime)})`
+    : "";
+
+  return (
+    <p className="mt-1.5 font-medium tabular-nums">
+      Same-day order cutoff in {formatSecondsAsCountdown(secondsLeft)}
+      {cutoffLabel}
+    </p>
+  );
 }
 
 const FULFILLMENT_LABELS: Record<"pickup" | "delivery" | "shipping", string> = {
@@ -395,6 +440,18 @@ function CheckoutContent() {
   );
   const [selectedDate, setSelectedDate] = useState("");
   const [calendarOpen, setCalendarOpen] = useState(false);
+
+  // Auto-select today when it's the first available date (so slots show without extra click)
+  useEffect(() => {
+    if (selectedDate || !availableDates?.length) return;
+    const today = new Date();
+    const todayYmd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    if (availableDates.includes(todayYmd)) {
+      setSelectedDate(todayYmd);
+    } else if (availableDates[0]) {
+      setSelectedDate(availableDates[0]);
+    }
+  }, [availableDates, selectedDate]);
   const currentHold = useQuery(
     api.scheduling.getHold,
     cart?.slotHoldId ? { holdId: cart.slotHoldId as never } : "skip"
@@ -1249,7 +1306,59 @@ function CheckoutContent() {
                   );
                 })}
                 {(slots?.available ?? []).length === 0 && (
-                  <p className="text-xs text-muted-foreground">No available slots for this date.</p>
+                  <div className="space-y-1 text-xs text-muted-foreground">
+                    <p>No available slots for this date.</p>
+                    {(slots?.blocked ?? []).length > 0 && (
+                      <div className="space-y-0.5 text-amber-600">
+                        {(slots.blocked ?? []).some((b) => b.reason === "LEAD_TIME") && (
+                          <>
+                            <p>
+                              Order {(slots?.leadTimeHours ?? 5)}+ hours before slot time.
+                            </p>
+                            <p className="font-medium">
+                              Store time: {slots?.storeTimeForDebug ??
+                              new Date().toLocaleTimeString("en-US", {
+                                timeZone: "America/New_York",
+                                hour: "numeric",
+                                minute: "2-digit",
+                                hour12: true,
+                              }) + " America/New_York"}
+                            </p>
+                          </>
+                        )}
+                        {(slots.blocked ?? []).some((b) => b.reason === "CUTOFF") && (
+                          <p>
+                            Same-day cutoff passed{slots?.cutoffForDebug ? ` (cutoff: ${slots.cutoffForDebug})` : ""}. Try tomorrow.
+                          </p>
+                        )}
+                        {(slots.blocked ?? []).some((b) => b.reason === "FULL") && (
+                          <p>Slots are full.</p>
+                        )}
+                        {(slots.blocked ?? []).some((b) => b.reason === "CLOSED" || b.reason === "BLACKOUT") && (
+                          <p>Store closed or blackout.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            {selectedDate && slots && needsSchedulingForMode && slots.isSameDay === true && (
+              <div className="mt-3 rounded-lg border bg-amber-50/50 px-3 py-2 text-xs dark:bg-amber-950/20">
+                {typeof slots.minutesUntilCutoff === "number" && slots.minutesUntilCutoff > 0 ? (
+                  <SameDayCutoffTimer
+                    initialMinutes={slots.minutesUntilCutoff}
+                    cutoffTime={slots.cutoffForDebug}
+                  />
+                ) : slots.cutoffForDebug ? (
+                  <p className="tabular-nums text-amber-700 dark:text-amber-300">
+                    Order by {formatSlotTime(slots.cutoffForDebug)}
+                    {slots.isSameDay === true && typeof slots.minutesUntilCutoff === "number" && slots.minutesUntilCutoff <= 0 ? " — passed" : ""}
+                  </p>
+                ) : (
+                  <p className="tabular-nums text-amber-700 dark:text-amber-300">
+                    Order by store cutoff
+                  </p>
                 )}
               </div>
             )}
@@ -1352,7 +1461,7 @@ function CheckoutContent() {
                   setCouponCode("");
                 } catch (err) {
                   setCouponMessage({
-                    text: err instanceof Error ? err.message : "Invalid coupon code.",
+                    text: extractCouponErrorMessage(err),
                     error: true,
                   });
                 }

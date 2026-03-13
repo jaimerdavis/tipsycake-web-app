@@ -22,6 +22,8 @@ export interface CouponForDiscount {
   type: "percent" | "fixed" | "free_delivery";
   value: number;
   minSubtotalCents?: number;
+  /** When true and type is "fixed", discount applies per eligible unit (value × qty). */
+  stackable?: boolean;
   includeProductIds?: string[];
   includeCategoryTags?: string[];
   excludeProductIds?: string[];
@@ -94,10 +96,27 @@ export function computeEligibleSubtotalCents(
   }, 0);
 }
 
+/** Compute total quantity of eligible items (for stackable fixed coupons). */
+function computeEligibleQuantity(
+  items: CartItemForCoupon[],
+  coupon: CouponForDiscount,
+  getProductTags: (productId: string) => ProductTags | undefined
+): number {
+  if (!hasProductFilters(coupon)) {
+    return items.reduce((sum, i) => sum + i.qty, 0);
+  }
+  return items.reduce((sum, item) => {
+    if (!isItemEligible(item.productId, coupon, getProductTags)) return sum;
+    return sum + item.qty;
+  }, 0);
+}
+
 export type ComputeCouponDiscountParams =
   | {
       coupon: CouponForDiscount;
       subtotalCents: number;
+      /** Total eligible quantity (for stackable fixed). When omitted, treated as 1 for stackable. */
+      eligibleQty?: number;
     }
   | {
       coupon: CouponForDiscount;
@@ -107,11 +126,18 @@ export type ComputeCouponDiscountParams =
 
 export function computeCouponDiscount(params: ComputeCouponDiscountParams): number {
   let subtotalCents: number;
+  let eligibleQty: number;
 
   if ("subtotalCents" in params) {
     subtotalCents = params.subtotalCents;
+    eligibleQty = params.eligibleQty ?? 1;
   } else {
     subtotalCents = computeEligibleSubtotalCents(
+      params.items,
+      params.coupon,
+      params.getProductTags
+    );
+    eligibleQty = computeEligibleQuantity(
       params.items,
       params.coupon,
       params.getProductTags
@@ -124,7 +150,13 @@ export function computeCouponDiscount(params: ComputeCouponDiscountParams): numb
   }
   if (coupon.type === "free_delivery") return 0;
   if (coupon.type === "percent") {
-    return Math.max(0, Math.floor((subtotalCents * coupon.value) / 100));
+    // stackable => value% per unit (e.g. 10% on 2 items = 20% of subtotal)
+    const effectivePercent = coupon.stackable
+      ? coupon.value * eligibleQty
+      : coupon.value;
+    return Math.max(0, Math.min(subtotalCents, Math.floor((subtotalCents * effectivePercent) / 100)));
   }
-  return Math.max(0, Math.min(subtotalCents, coupon.value));
+  // fixed: stackable => value per unit, non-stackable => single application
+  const effectiveValue = coupon.stackable ? coupon.value * eligibleQty : coupon.value;
+  return Math.max(0, Math.min(subtotalCents, effectiveValue));
 }

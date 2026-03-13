@@ -1,7 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { computePricingSnapshot, computeUnitPriceCents } from "./lib/pricing";
 import { computeCouponDiscount } from "./lib/couponLogic";
@@ -242,6 +242,7 @@ export const getActive = query({
               type: coupon.type,
               value: coupon.value,
               minSubtotalCents: coupon.minSubtotalCents,
+              stackable: coupon.stackable,
               includeProductIds: coupon.includeProductIds?.map(String),
               includeCategoryTags: coupon.includeCategoryTags,
               excludeProductIds: coupon.excludeProductIds?.map(String),
@@ -264,8 +265,10 @@ export const getActive = query({
               type: coupon.type,
               value: coupon.value,
               minSubtotalCents: coupon.minSubtotalCents,
+              stackable: coupon.stackable,
             },
             subtotalCents,
+            eligibleQty: items.reduce((s, i) => s + i.qty, 0),
           });
         }
       }
@@ -469,7 +472,7 @@ export const applyCoupon = mutation({
         .toUpperCase();
     const normalized = normalizeCode(args.code);
     if (!normalized) {
-      throw new Error("Coupon code is required");
+      throw new ConvexError("Coupon code is required");
     }
 
     const cart = await ctx.db.get(args.cartId);
@@ -488,13 +491,13 @@ export const applyCoupon = mutation({
     }
 
     if (!coupon) {
-      throw new Error("Coupon is invalid");
+      throw new ConvexError("We couldn't find that code. Please double-check the spelling and try again.");
     }
     if (!coupon.enabled) {
-      throw new Error("This coupon is no longer active");
+      throw new ConvexError("This coupon is no longer active");
     }
     if (coupon.expiresAt && coupon.expiresAt <= Date.now()) {
-      throw new Error("Coupon expired");
+      throw new ConvexError("Coupon expired");
     }
 
     const items = await ctx.db
@@ -513,7 +516,7 @@ export const applyCoupon = mutation({
       coupon.maxRedemptions !== undefined &&
       totalRedemptions.length >= coupon.maxRedemptions
     ) {
-      throw new Error("Coupon usage limit reached");
+      throw new ConvexError("Coupon usage limit reached");
     }
 
     if (coupon.maxRedemptionsPerCustomer !== undefined) {
@@ -534,7 +537,7 @@ export const applyCoupon = mutation({
           )
           .collect();
         if (byUser.length >= coupon.maxRedemptionsPerCustomer) {
-          throw new Error("Per-customer usage limit reached");
+          throw new ConvexError("Per-customer usage limit reached");
         }
       }
     }

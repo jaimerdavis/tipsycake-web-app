@@ -93,6 +93,7 @@ export const createStripeSession = action({
               type: coupon.type,
               value: coupon.value,
               minSubtotalCents: coupon.minSubtotalCents,
+              stackable: coupon.stackable,
               includeProductIds: coupon.includeProductIds?.map(String),
               includeCategoryTags: coupon.includeCategoryTags,
               excludeProductIds: coupon.excludeProductIds?.map(String),
@@ -111,8 +112,10 @@ export const createStripeSession = action({
               type: coupon.type,
               value: coupon.value,
               minSubtotalCents: coupon.minSubtotalCents,
+              stackable: coupon.stackable,
             },
             subtotalCents,
+            eligibleQty: items.reduce((s, i) => s + i.qty, 0),
           });
         }
       }
@@ -275,6 +278,7 @@ export const createPaymentIntent = action({
               type: coupon.type,
               value: coupon.value,
               minSubtotalCents: coupon.minSubtotalCents,
+              stackable: coupon.stackable,
               includeProductIds: coupon.includeProductIds?.map(String),
               includeCategoryTags: coupon.includeCategoryTags,
               excludeProductIds: coupon.excludeProductIds?.map(String),
@@ -293,8 +297,10 @@ export const createPaymentIntent = action({
               type: coupon.type,
               value: coupon.value,
               minSubtotalCents: coupon.minSubtotalCents,
+              stackable: coupon.stackable,
             },
             subtotalCents,
+            eligibleQty: items.reduce((s, i) => s + i.qty, 0),
           });
         }
       }
@@ -641,6 +647,7 @@ export const createPayPalOrder = action({
               type: coupon.type,
               value: coupon.value,
               minSubtotalCents: coupon.minSubtotalCents,
+              stackable: coupon.stackable,
               includeProductIds: coupon.includeProductIds?.map(String),
               includeCategoryTags: coupon.includeCategoryTags,
               excludeProductIds: coupon.excludeProductIds?.map(String),
@@ -659,8 +666,10 @@ export const createPayPalOrder = action({
               type: coupon.type,
               value: coupon.value,
               minSubtotalCents: coupon.minSubtotalCents,
+              stackable: coupon.stackable,
             },
             subtotalCents,
+            eligibleQty: items.reduce((s, i) => s + i.qty, 0),
           });
         }
       }

@@ -35,6 +35,8 @@ export default function AdminSchedulingPage() {
   const [rulesForm, setRulesForm] = useState({
     timezone: "America/New_York",
     globalLeadTimeHours: "5",
+    sameDayCutoffPickup: "12:15",
+    sameDayCutoffDelivery: "12:15",
     holdMinutes: "10",
     pickupDuration: "60",
     deliveryDuration: "60",
@@ -60,11 +62,16 @@ export default function AdminSchedulingPage() {
 
   useEffect(() => {
     if (rules) {
+      const ct = rules.cutoffTimes as Record<string, { pickup?: string; delivery?: string }> | undefined;
+      const pickupCutoff = ct?.monday?.pickup ?? ct?.tuesday?.pickup ?? "12:15";
+      const deliveryCutoff = ct?.monday?.delivery ?? ct?.tuesday?.delivery ?? "12:15";
       setRulesForm((prev) => ({
         ...prev,
         timezone: rules.timezone ?? prev.timezone,
         globalLeadTimeHours: String(rules.globalLeadTimeHours ?? prev.globalLeadTimeHours),
         holdMinutes: String(rules.holdMinutes ?? prev.holdMinutes),
+        sameDayCutoffPickup: typeof pickupCutoff === "string" ? pickupCutoff : prev.sameDayCutoffPickup,
+        sameDayCutoffDelivery: typeof deliveryCutoff === "string" ? deliveryCutoff : prev.sameDayCutoffDelivery,
         pickupDuration: String(rules.slotDurationMinutesByMode.pickup ?? prev.pickupDuration),
         deliveryDuration: String(rules.slotDurationMinutesByMode.delivery ?? prev.deliveryDuration),
         shippingDuration: String(rules.slotDurationMinutesByMode.shipping ?? prev.shippingDuration),
@@ -317,6 +324,30 @@ export default function AdminSchedulingPage() {
                 />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-2">
+                <Label htmlFor="sameDayCutoffPickup">Same-day cutoff (pickup) HH:mm</Label>
+                <Input
+                  id="sameDayCutoffPickup"
+                  placeholder="12:15"
+                  value={rulesForm.sameDayCutoffPickup}
+                  onChange={(event) =>
+                    setRulesForm((prev) => ({ ...prev, sameDayCutoffPickup: event.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="sameDayCutoffDelivery">Same-day cutoff (delivery) HH:mm</Label>
+                <Input
+                  id="sameDayCutoffDelivery"
+                  placeholder="12:15"
+                  value={rulesForm.sameDayCutoffDelivery}
+                  onChange={(event) =>
+                    setRulesForm((prev) => ({ ...prev, sameDayCutoffDelivery: event.target.value }))
+                  }
+                />
+              </div>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="slotTimes">Static slot times (one per line, HH:mm, EST)</Label>
               <textarea
@@ -404,16 +435,23 @@ export default function AdminSchedulingPage() {
                       saturday: [{ start: "09:00", end: "14:00" }],
                       sunday: [],
                     },
-                    cutoffTimes: {
-                      // Same-day order cutoff: 12:15 PM EST. After this, no same-day pickup/delivery.
-                      monday: { pickup: "12:15", delivery: "12:15", shipping: "12:00" },
-                      tuesday: { pickup: "12:15", delivery: "12:15", shipping: "12:00" },
-                      wednesday: { pickup: "12:15", delivery: "12:15", shipping: "12:00" },
-                      thursday: { pickup: "12:15", delivery: "12:15", shipping: "12:00" },
-                      friday: { pickup: "12:15", delivery: "12:15", shipping: "12:00" },
-                      saturday: { pickup: "12:15", delivery: "12:15", shipping: "10:00" },
-                      sunday: {},
-                    },
+                    cutoffTimes: (() => {
+                      const pk = /^\d{1,2}:\d{2}$/.test(rulesForm.sameDayCutoffPickup.trim())
+                        ? rulesForm.sameDayCutoffPickup.trim()
+                        : "12:15";
+                      const dv = /^\d{1,2}:\d{2}$/.test(rulesForm.sameDayCutoffDelivery.trim())
+                        ? rulesForm.sameDayCutoffDelivery.trim()
+                        : "12:15";
+                      return {
+                        monday: { pickup: pk, delivery: dv, shipping: "12:00" },
+                        tuesday: { pickup: pk, delivery: dv, shipping: "12:00" },
+                        wednesday: { pickup: pk, delivery: dv, shipping: "12:00" },
+                        thursday: { pickup: pk, delivery: dv, shipping: "12:00" },
+                        friday: { pickup: pk, delivery: dv, shipping: "12:00" },
+                        saturday: { pickup: pk, delivery: dv, shipping: "10:00" },
+                        sunday: {},
+                      };
+                    })(),
                     globalLeadTimeHours: Number(rulesForm.globalLeadTimeHours),
                     slotDurationMinutesByMode: {
                       pickup: Number(rulesForm.pickupDuration),

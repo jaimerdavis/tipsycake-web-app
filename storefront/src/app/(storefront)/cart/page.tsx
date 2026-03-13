@@ -26,7 +26,7 @@ import { Label } from "@/components/ui/label";
 import { ProductImage } from "@/components/ProductImage";
 
 import { getOrCreateGuestSessionId } from "@/lib/guestSession";
-import { productDisplayName } from "@/lib/utils";
+import { extractCouponErrorMessage, productDisplayName } from "@/lib/utils";
 
 export default function CartPage() {
   const searchParams = useSearchParams();
@@ -218,7 +218,7 @@ export default function CartPage() {
                   setCouponCode("");
                 } catch (err) {
                   setCouponMessage({
-                    text: err instanceof Error ? err.message : "Invalid coupon code.",
+                    text: extractCouponErrorMessage(err),
                     error: true,
                   });
                 }

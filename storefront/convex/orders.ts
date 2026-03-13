@@ -177,6 +177,7 @@ async function finalizeFromPaymentEvent(
             type: coupon.type,
             value: coupon.value,
             minSubtotalCents: coupon.minSubtotalCents,
+            stackable: coupon.stackable,
             includeProductIds: coupon.includeProductIds?.map(String),
             includeCategoryTags: coupon.includeCategoryTags,
             excludeProductIds: coupon.excludeProductIds?.map(String),
@@ -195,8 +196,10 @@ async function finalizeFromPaymentEvent(
             type: coupon.type,
             value: coupon.value,
             minSubtotalCents: coupon.minSubtotalCents,
+            stackable: coupon.stackable,
           },
           subtotalCents,
+          eligibleQty: items.reduce((s, i) => s + i.qty, 0),
         });
       }
       couponIdForRedemption = coupon._id as unknown as string;
@@ -604,6 +607,7 @@ export const completeFreeOrder = mutation({
             type: coupon.type,
             value: coupon.value,
             minSubtotalCents: coupon.minSubtotalCents,
+            stackable: coupon.stackable,
             includeProductIds: coupon.includeProductIds?.map(String),
             includeCategoryTags: coupon.includeCategoryTags,
             excludeProductIds: coupon.excludeProductIds?.map(String),
@@ -622,8 +626,10 @@ export const completeFreeOrder = mutation({
             type: coupon.type,
             value: coupon.value,
             minSubtotalCents: coupon.minSubtotalCents,
+            stackable: coupon.stackable,
           },
           subtotalCents,
+          eligibleQty: cartItems.reduce((s, i) => s + i.qty, 0),
         });
       }
       couponIdForRedemption = coupon._id as unknown as string;

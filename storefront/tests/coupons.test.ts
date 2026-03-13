@@ -66,6 +66,35 @@ describe("computeCouponDiscount", () => {
     expect(result).toBe(0);
   });
 
+  describe("stackable", () => {
+    it("fixed stackable: applies value per eligible unit", () => {
+      const result = computeCouponDiscount({
+        coupon: { type: "fixed", value: 500, stackable: true },
+        subtotalCents: 3000,
+        eligibleQty: 2,
+      });
+      expect(result).toBe(1000); // $5 × 2 = $10
+    });
+
+    it("fixed stackable: caps at subtotal", () => {
+      const result = computeCouponDiscount({
+        coupon: { type: "fixed", value: 500, stackable: true },
+        subtotalCents: 600,
+        eligibleQty: 2,
+      });
+      expect(result).toBe(600); // $10 would exceed subtotal
+    });
+
+    it("percent stackable: value% per unit", () => {
+      const result = computeCouponDiscount({
+        coupon: { type: "percent", value: 10, stackable: true },
+        subtotalCents: 2000,
+        eligibleQty: 2,
+      });
+      expect(result).toBe(400); // 20% of $20 = $4
+    });
+  });
+
   describe("product filters", () => {
     const p1 = "prod_a";
     const p2 = "prod_b";

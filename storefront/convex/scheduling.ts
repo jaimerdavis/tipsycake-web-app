@@ -3,8 +3,44 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { requireRole } from "./lib/auth";
+import { TZDate } from "@date-fns/tz";
 
 type Mode = "pickup" | "delivery" | "shipping";
+
+/** Store local time (date + HH:mm) to UTC timestamp. All cutoff/slot times are in store TZ. */
+function storeLocalToUtc(dateYmd: string, hm: string, tz: string): Date {
+  const [y, m, d] = dateYmd.split("-").map(Number);
+  const [h, min] = hm.split(":").map(Number);
+  const storeLocal = new TZDate(y, m - 1, d, h, min, 0, 0, tz);
+  return new Date(storeLocal.getTime());
+}
+
+/** Current date (YYYY-MM-DD) and time (minutes since midnight) in store timezone.
+ * Uses Intl.formatToParts for correct behavior in UTC server environments (e.g. Convex). */
+function nowInStoreTz(now: Date, tz: string): { dateYmd: string; minutesSinceMidnight: number } {
+  const opts: Intl.DateTimeFormatOptions = { timeZone: tz };
+  const dateParts = new Intl.DateTimeFormat("en-CA", {
+    ...opts,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const timeParts = new Intl.DateTimeFormat("en-US", {
+    ...opts,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const year = dateParts.find((p) => p.type === "year")?.value ?? "2025";
+  const month = dateParts.find((p) => p.type === "month")?.value ?? "01";
+  const day = dateParts.find((p) => p.type === "day")?.value ?? "01";
+  const hour = parseInt(timeParts.find((p) => p.type === "hour")?.value ?? "0", 10);
+  const minute = parseInt(timeParts.find((p) => p.type === "minute")?.value ?? "0", 10);
+  return {
+    dateYmd: `${year}-${month}-${day}`,
+    minutesSinceMidnight: hour * 60 + minute,
+  };
+}
 
 function pad2(input: number) {
   return input.toString().padStart(2, "0");
@@ -14,13 +50,16 @@ function dateToYmd(date: Date) {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
-function parseHm(hm: string) {
-  const [h, m] = hm.split(":").map(Number);
-  return { h, m };
+/** Returns [hours, minutes]. Use for consistent destructuring. */
+function parseHm(hm: string): [number, number] {
+  const parts = String(hm ?? "").split(":");
+  const h = Number(parts[0]) || 0;
+  const m = Number(parts[1]) || 0;
+  return [h, m];
 }
 
 function combineDateAndHm(date: Date, hm: string) {
-  const { h, m } = parseHm(hm);
+  const [h, m] = parseHm(hm);
   return new Date(
     date.getFullYear(),
     date.getMonth(),
@@ -73,6 +112,14 @@ async function computeCartLeadTimeHours(
   return maxLead;
 }
 
+/** Add days to a YYYY-MM-DD string in store timezone. */
+function addDaysToYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + days);
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
 export const getAvailableDates = query({
   args: {
     mode: v.union(v.literal("pickup"), v.literal("delivery"), v.literal("shipping")),
@@ -84,22 +131,26 @@ export const getAvailableDates = query({
     if (!rules) return [];
 
     const now = new Date();
+    const tz = rules.timezone ?? "America/New_York";
+    const storeToday = nowInStoreTz(now, tz).dateYmd;
+
     const leadHours = await computeCartLeadTimeHours(ctx, args.cartId as unknown as string, {
       globalLeadTimeHours: rules.globalLeadTimeHours,
       productLeadTimeHours: (rules.productLeadTimeHours ?? {}) as Record<string, number>,
     });
-    // Same-day allowed for pickup/delivery; shipping uses lead time
-    const earliest =
+    // Same-day allowed for pickup/delivery; shipping skips same-day
+    const startDate =
       args.mode === "pickup" || args.mode === "delivery"
-        ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0)
-        : new Date(now.getTime() + leadHours * 60 * 60 * 1000);
+        ? storeToday
+        : addDaysToYmd(storeToday, 1); // Shipping: first slot is lead time from now
 
     const dates: string[] = [];
     for (let i = 0; i < 14; i++) {
-      const day = new Date(now);
-      day.setDate(now.getDate() + i);
-      const dayStr = dateToYmd(day);
-      if (day < earliest && dayStr !== dateToYmd(earliest)) continue;
+      const dayStr = addDaysToYmd(startDate, i);
+      if (args.mode === "shipping") {
+        const slotStartUtc = storeLocalToUtc(dayStr, "09:00", tz);
+        if (slotStartUtc < new Date(now.getTime() + leadHours * 60 * 60 * 1000)) continue;
+      }
 
       const blackout = await ctx.db
         .query("blackoutDates")
@@ -127,12 +178,19 @@ export const getSlots = query({
   handler: async (ctx, args) => {
     const rules = await getEnabledRules(ctx);
     if (!rules) {
-      return { available: [], blocked: [{ slotStart: "00:00", reason: "CLOSED" }] };
+      const fallback = nowInStoreTz(new Date(), "America/New_York");
+      const h = Math.floor(fallback.minutesSinceMidnight / 60);
+      const m = fallback.minutesSinceMidnight % 60;
+      const storeTimeForDebug = `${h % 12 || 12}:${m.toString().padStart(2, "0")} ${h >= 12 ? "PM" : "AM"} (no rules)`;
+      return { available: [], blocked: [{ slotStart: "00:00", reason: "CLOSED" }], storeTimeForDebug };
     }
 
     const now = new Date();
-    const targetDate = new Date(`${args.date}T00:00:00`);
-    const dayKey = weekdayKey(targetDate);
+    const tz = rules.timezone ?? "America/New_York";
+    const storeNow = nowInStoreTz(now, tz);
+    const [y, m, d] = args.date.split("-").map(Number);
+    const targetDateForWeekday = new TZDate(y, m - 1, d, 12, 0, 0, 0, tz);
+    const dayKey = weekdayKey(targetDateForWeekday as unknown as Date);
     const staticTimes = rules.slotTimes as string[] | undefined;
     const defaultMax = (rules.defaultMaxOrdersPerSlot as number | undefined) ?? 999;
 
@@ -151,7 +209,10 @@ export const getSlots = query({
       const windows = ((rules.storeHours as Record<string, Array<{ start: string; end: string }>>)[dayKey] ??
         []) as Array<{ start: string; end: string }>;
       if (windows.length === 0) {
-        return { available: [], blocked: [{ slotStart: "00:00", reason: "CLOSED" }], selectedSlotKey: null };
+        const h = Math.floor(storeNow.minutesSinceMidnight / 60);
+        const m = storeNow.minutesSinceMidnight % 60;
+        const storeTimeForDebug = `${h % 12 || 12}:${m.toString().padStart(2, "0")} ${h >= 12 ? "PM" : "AM"} ${tz}`;
+        return { available: [], blocked: [{ slotStart: "00:00", reason: "CLOSED" }], selectedSlotKey: null, storeTimeForDebug };
       }
       const dur = args.mode === "pickup"
         ? rules.slotDurationMinutesByMode.pickup
@@ -159,41 +220,63 @@ export const getSlots = query({
           ? rules.slotDurationMinutesByMode.delivery
           : rules.slotDurationMinutesByMode.shipping;
       for (const window of windows) {
-        let cursor = combineDateAndHm(targetDate, window.start);
-        const end = combineDateAndHm(targetDate, window.end);
-        while (cursor < end) {
-          slotStarts.push(`${pad2(cursor.getHours())}:${pad2(cursor.getMinutes())}`);
-          cursor = new Date(cursor.getTime() + dur * 60 * 1000);
+        const [startH, startM] = parseHm(window.start);
+        const [endH, endM] = parseHm(window.end);
+        let totalMins = startH * 60 + startM;
+        const endTotalMins = endH * 60 + endM;
+        while (totalMins < endTotalMins) {
+          slotStarts.push(`${pad2(Math.floor(totalMins / 60))}:${pad2(totalMins % 60)}`);
+          totalMins += dur;
         }
       }
     }
 
     if (slotStarts.length === 0) {
-      return { available: [], blocked: [{ slotStart: "00:00", reason: "CLOSED" }], selectedSlotKey: null };
+      const h = Math.floor(storeNow.minutesSinceMidnight / 60);
+      const m = storeNow.minutesSinceMidnight % 60;
+      const storeTimeForDebug = `${h % 12 || 12}:${m.toString().padStart(2, "0")} ${h >= 12 ? "PM" : "AM"} ${tz}`;
+      return { available: [], blocked: [{ slotStart: "00:00", reason: "CLOSED" }], selectedSlotKey: null, storeTimeForDebug };
     }
 
-    // Same-day pickup/delivery: only offer 5:00 PM, 5:30 PM, 6:00 PM (shipping unchanged)
-    const isSameDay = args.date === dateToYmd(now);
-    if (
-      isSameDay &&
-      (args.mode === "pickup" || args.mode === "delivery")
-    ) {
-      slotStarts = ["17:00", "17:30", "18:00"];
-    }
+    // Use configured slots for same-day too; lead time and cutoff will filter.
+    const isSameDay = args.date === storeNow.dateYmd;
 
     const leadHours = await computeCartLeadTimeHours(ctx, args.cartId as unknown as string, {
       globalLeadTimeHours: rules.globalLeadTimeHours,
       productLeadTimeHours: (rules.productLeadTimeHours ?? {}) as Record<string, number>,
     });
-    // Lead time: slot must be at least leadHours from now (e.g. 5 hours)
-    const earliestAllowed = new Date(now.getTime() + leadHours * 60 * 60 * 1000);
+    // Lead time: slot must be at least leadHours from now. Applied in STORE timezone so local
+    // customers see correct availability regardless of server location.
+    const leadMinutes = leadHours * 60;
+    const slotPassesLeadTime = (slotStartHm: string): boolean => {
+      if (!isSameDay) {
+        // Future day: compare UTC timestamps (slot is far enough ahead)
+        const cursorUtc = storeLocalToUtc(args.date, slotStartHm, tz);
+        const earliestUtc = new Date(now.getTime() + leadMinutes * 60 * 1000);
+        return cursorUtc >= earliestUtc;
+      }
+      // Same day: compare in store minutes (slot >= now + lead)
+      const [sh, sm] = parseHm(slotStartHm);
+      const slotMinutes = sh * 60 + sm;
+      return slotMinutes >= storeNow.minutesSinceMidnight + leadMinutes;
+    };
 
     const blackout = await ctx.db
       .query("blackoutDates")
       .withIndex("by_date", (q) => q.eq("date", args.date))
       .collect();
     if (blackout.some((entry) => !entry.modes || entry.modes.includes(args.mode))) {
-      return { available: [], blocked: [{ slotStart: "00:00", reason: "BLACKOUT" }] };
+      const cutoffByDay = (rules.cutoffTimes as Record<string, Partial<Record<Mode, string>>>)[dayKey];
+      const cutoff = typeof cutoffByDay?.[args.mode] === "string" ? cutoffByDay![args.mode] : null;
+      const h = Math.floor(storeNow.minutesSinceMidnight / 60);
+      const m = storeNow.minutesSinceMidnight % 60;
+      const storeTimeForDebug = `${h % 12 || 12}:${m.toString().padStart(2, "0")} ${h >= 12 ? "PM" : "AM"} ${tz}`;
+      return {
+        available: [],
+        blocked: [{ slotStart: "00:00", reason: "BLACKOUT" }],
+        storeTimeForDebug,
+        cutoffForDebug: cutoff ?? undefined,
+      };
     }
 
     const durationMinutes =
@@ -207,21 +290,28 @@ export const getSlots = query({
     const blocked: Array<{ slotStart: string; reason: string }> = [];
 
     const cutoffByDay = (rules.cutoffTimes as Record<string, Partial<Record<Mode, string>>>)[dayKey];
-    const cutoff = cutoffByDay?.[args.mode];
-    const cutoffMoment = cutoff ? combineDateAndHm(targetDate, cutoff) : null;
+    const cutoff = typeof cutoffByDay?.[args.mode] === "string" ? cutoffByDay![args.mode] : null;
+    const cutoffParsed = cutoff ? parseHm(cutoff) : null;
+    const cutoffMinutes =
+      cutoffParsed !== null ? cutoffParsed[0] * 60 + cutoffParsed[1] : null;
+    const pastCutoff =
+      isSameDay &&
+      cutoffMinutes !== null &&
+      storeNow.minutesSinceMidnight >= cutoffMinutes;
 
     for (const slotStart of slotStarts) {
-      const cursor = combineDateAndHm(targetDate, slotStart);
-      const slotEndDate = new Date(cursor.getTime() + durationMinutes * 60 * 1000);
-      const slotEnd = `${pad2(slotEndDate.getHours())}:${pad2(slotEndDate.getMinutes())}`;
+      const cursorUtc = storeLocalToUtc(args.date, slotStart, tz);
+      const [sh, sm] = parseHm(slotStart);
+      const endM = sm + durationMinutes;
+      const slotEnd = `${pad2(sh + Math.floor(endM / 60))}:${pad2(endM % 60)}`;
       const key = slotKey(args.date, slotStart, args.mode);
 
-      if (cursor < earliestAllowed) {
+      if (!slotPassesLeadTime(slotStart)) {
         blocked.push({ slotStart, reason: "LEAD_TIME" });
         continue;
       }
 
-      if (cutoffMoment && now > cutoffMoment && args.date === dateToYmd(now)) {
+      if (pastCutoff) {
         blocked.push({ slotStart, reason: "CUTOFF" });
         continue;
       }
@@ -270,7 +360,26 @@ export const getSlots = query({
       }
     }
 
-    return { available, blocked, selectedSlotKey };
+    // Help verify timezone and rules: formatted store-local time, lead time, cutoff for debugging
+    const storeH = Math.floor(storeNow.minutesSinceMidnight / 60);
+    const storeM = storeNow.minutesSinceMidnight % 60;
+    const storeTimeForDebug = `${storeH % 12 || 12}:${storeM.toString().padStart(2, "0")} ${storeH >= 12 ? "PM" : "AM"} ${tz}`;
+    const cutoffForDebug = cutoff ?? undefined;
+    const minutesUntilCutoff =
+      isSameDay && cutoffMinutes !== null && !pastCutoff
+        ? cutoffMinutes - storeNow.minutesSinceMidnight
+        : null;
+
+    return {
+      available,
+      blocked,
+      selectedSlotKey,
+      storeTimeForDebug,
+      leadTimeHours: leadHours,
+      cutoffForDebug,
+      minutesUntilCutoff,
+      isSameDay,
+    };
   },
 });
 
