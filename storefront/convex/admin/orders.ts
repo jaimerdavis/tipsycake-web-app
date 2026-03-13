@@ -676,6 +676,8 @@ export const resendOwnerNotification = mutation({
       contactEmail: order.contactEmail,
       contactPhone: order.contactPhone,
       contactName: order.contactName,
+      cakeFor: order.cakeFor,
+      occasion: order.occasion,
       items: orderItems,
       pricingSnapshot: order.pricingSnapshot,
       appliedCouponCode: order.appliedCouponCode,

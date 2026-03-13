@@ -294,10 +294,20 @@ export const getActive = query({
     const enrichedItems = await Promise.all(
       items.map(async (item) => {
         const product = await ctx.db.get(item.productId);
+        const variant = item.variantId
+          ? await ctx.db.get(item.variantId)
+          : null;
+        const modifierOptionNames: string[] = [];
+        for (const sel of item.modifiers ?? []) {
+          const opt = await ctx.db.get(sel.optionId);
+          if (opt?.name) modifierOptionNames.push(opt.name);
+        }
         return {
           ...item,
           productName: product?.name ?? "Unknown product",
           productImages: product?.images ?? [],
+          variantLabel: variant?.label,
+          modifierOptionNames,
         };
       })
     );
@@ -592,6 +602,9 @@ export const setContact = mutation({
     cartId: v.id("carts"),
     email: v.optional(v.string()),
     phone: v.optional(v.string()),
+    contactName: v.optional(v.string()),
+    cakeFor: v.optional(v.string()),
+    occasion: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const cart = await ctx.db.get(args.cartId);
@@ -600,23 +613,25 @@ export const setContact = mutation({
     const email = args.email?.trim();
     const phone = args.phone?.trim();
 
+    if (email !== undefined && email !== "" && !isValidEmail(email)) {
+      throw new Error("Invalid email format");
+    }
+    if (phone !== undefined && phone !== "" && !isValidUSPhone(phone)) {
+      throw new Error("Invalid phone. Use US format: +1 and 10 digits (e.g. +1-954-637-7608)");
+    }
+
     const hasValidEmail = email !== undefined && email !== "" && isValidEmail(email);
     const hasValidPhone = phone !== undefined && phone !== "" && isValidUSPhone(phone);
+    const normalizedPhone = hasValidPhone ? normalizePhoneToE164(phone!) : null;
 
-    if (!hasValidEmail || !hasValidPhone) {
-      throw new Error("Both email and phone are required. Phone must be US format: +1 and 10 digits (e.g. +1-954-637-7608)");
-    }
+    const patch: Record<string, unknown> = { updatedAt: Date.now() };
+    if (args.email !== undefined) patch.contactEmail = hasValidEmail ? email!.toLowerCase() : undefined;
+    if (args.phone !== undefined) patch.contactPhone = hasValidPhone && normalizedPhone ? normalizedPhone : undefined;
+    if (args.contactName !== undefined) patch.contactName = args.contactName?.trim() || undefined;
+    if (args.cakeFor !== undefined) patch.cakeFor = args.cakeFor?.trim() || undefined;
+    if (args.occasion !== undefined) patch.occasion = args.occasion?.trim() || undefined;
 
-    const normalizedPhone = normalizePhoneToE164(phone!);
-    if (!normalizedPhone) {
-      throw new Error("Invalid phone. Use US format: +1 followed by 10 digits (e.g. +19546377608)");
-    }
-
-    await ctx.db.patch(args.cartId, {
-      contactEmail: hasValidEmail ? email!.toLowerCase() : undefined,
-      contactPhone: hasValidPhone ? normalizedPhone : undefined,
-      updatedAt: Date.now(),
-    });
+    await ctx.db.patch(args.cartId, patch);
     return args.cartId;
   },
 });
@@ -663,6 +678,9 @@ export const convertGuestCartToUser = mutation({
     await ctx.db.patch(userCart._id, {
       contactEmail: guestCart.contactEmail,
       contactPhone: guestCart.contactPhone,
+      contactName: guestCart.contactName,
+      cakeFor: guestCart.cakeFor,
+      occasion: guestCart.occasion,
       fulfillmentMode: guestCart.fulfillmentMode,
       addressId: guestCart.addressId,
       tipCents: guestCart.tipCents,

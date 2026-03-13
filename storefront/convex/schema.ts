@@ -133,7 +133,10 @@ export default defineSchema({
     ownerId: v.string(),
     status: v.union(v.literal("active"), v.literal("converted"), v.literal("abandoned")),
     contactEmail: v.optional(v.string()),
+    contactName: v.optional(v.string()),
     contactPhone: v.optional(v.string()),
+    cakeFor: v.optional(v.string()),
+    occasion: v.optional(v.string()),
     fulfillmentMode: v.optional(
       v.union(v.literal("pickup"), v.literal("delivery"), v.literal("shipping"))
     ),
@@ -344,6 +347,8 @@ export default defineSchema({
     contactEmail: v.optional(v.string()),
     contactName: v.optional(v.string()),
     contactPhone: v.optional(v.string()),
+    cakeFor: v.optional(v.string()),
+    occasion: v.optional(v.string()),
     fulfillmentMode: v.union(v.literal("pickup"), v.literal("delivery"), v.literal("shipping")),
     addressId: v.optional(v.id("addresses")),
     scheduledSlotKey: v.optional(v.string()),

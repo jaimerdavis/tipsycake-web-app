@@ -221,6 +221,9 @@ function CheckoutContent() {
 
   const [contactEmail, setContactEmail] = useState("");
   const [contactPhone, setContactPhone] = useState("");
+  const [contactName, setContactName] = useState("");
+  const [cakeFor, setCakeFor] = useState("");
+  const [occasion, setOccasion] = useState("");
   const [contactSynced, setContactSynced] = useState(false);
 
   const [savingContact, setSavingContact] = useState(false);
@@ -267,12 +270,23 @@ function CheckoutContent() {
     effectiveConfirmedCartId ? { cartId: effectiveConfirmedCartId as Id<"carts"> } : "skip"
   );
 
+  const clerkName =
+    user?.firstName && user?.lastName
+      ? `${user.firstName} ${user.lastName}`.trim()
+      : user?.firstName ?? user?.lastName ?? "";
+
   useEffect(() => {
     if (!cart) return;
     const email = cart.contactEmail ?? clerkEmail ?? "";
     const phone = cart.contactPhone ?? clerkPhone ?? "";
+    const name = cart.contactName ?? clerkName ?? "";
+    const forVal = cart.cakeFor ?? "";
+    const occ = cart.occasion ?? "";
     setContactEmail(email);
     setContactPhone(phone);
+    setContactName(name);
+    setCakeFor(forVal);
+    setOccasion(occ);
     // Only sync address from cart when initializing or when cart confirms our selection.
     // Avoid overwriting during setFulfillment in-flight (prevents address "bouncing").
     setSelectedAddressId((prev) => {
@@ -289,7 +303,7 @@ function CheckoutContent() {
       }
     }
     setContactSynced(true);
-  }, [cart, clerkEmail, clerkPhone]);
+  }, [cart, clerkEmail, clerkPhone, clerkName]);
 
   const setContact = useMutation(api.cart.setContact);
   const autoSavedRef = useRef(false);
@@ -300,6 +314,7 @@ function CheckoutContent() {
       cartId: cart._id,
       email: clerkEmail,
       phone: clerkPhone || undefined,
+      contactName: clerkName || undefined,
     }).catch(() => {
       // Don't reset autoSavedRef - would cause repeated retries on every deps change
     });
@@ -351,18 +366,23 @@ function CheckoutContent() {
 
   const scrollToFirstBlocker = useCallback(() => {
     setSectionBlockMessage(null);
-    if (!fulfillmentReady) {
+    // When delivery/shipping is selected but fulfillment isn't saved yet, the blocker is address (must select/confirm address first)
+    const addressBlocker =
+      needsAddress &&
+      (!addressReady ||
+        (!fulfillmentReady && (selectedMode === "delivery" || selectedMode === "shipping")));
+    if (!fulfillmentReady && selectedMode !== "delivery" && selectedMode !== "shipping") {
       setSectionBlockMessage({ fulfillment: "Choose how to receive your order first." });
       fulfillmentSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    if (!contactReady) {
-      setSectionBlockMessage({ contact: "Save your email and phone to continue." });
+    if (addressBlocker) {
+      setSectionBlockMessage({ address: "Select or confirm your delivery address to continue." });
       contactSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    if (!addressReady) {
-      setSectionBlockMessage({ address: "Enter a valid delivery or shipping address to continue." });
+    if (!contactReady) {
+      setSectionBlockMessage({ contact: "Save your email and phone to continue." });
       contactSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
@@ -371,7 +391,7 @@ function CheckoutContent() {
       schedulingSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-  }, [addressReady, contactReady, fulfillmentReady, schedulingReady]);
+  }, [addressReady, contactReady, fulfillmentReady, needsAddress, schedulingReady, selectedMode]);
 
   useEffect(() => {
     setSectionBlockMessage((prev) => {
@@ -850,7 +870,9 @@ function CheckoutContent() {
               </p>
             ) : selectedMode === "delivery" ? (
               <p className="text-xs text-muted-foreground">
-                Add your delivery address below to schedule Local Delivery
+                {selectedAddressId
+                  ? "Your selected address below will be used for delivery."
+                  : "Select or add your delivery address below to schedule Local Delivery."}
               </p>
             ) : selectedMode === "shipping" ? (
               <p className="text-xs text-muted-foreground">
@@ -890,7 +912,7 @@ function CheckoutContent() {
             <CardDescription>
               {clerkEmail && (cart?.contactEmail || contactEmail)
                 ? "Using your account email. Update if needed."
-                : "At least one of email or phone required for order confirmation"}
+                : "Email and phone both required before payment. You can fill these in any order."}
             </CardDescription>
             {sectionBlockMessage?.contact && (
               <p className="text-sm text-amber-600 font-medium">{sectionBlockMessage.contact}</p>
@@ -905,6 +927,43 @@ function CheckoutContent() {
               onSubmit={(e) => e.preventDefault()}
               className="space-y-4"
             >
+            <div className="space-y-2">
+              <Label htmlFor="contactName">Name (optional)</Label>
+              <Input
+                id="contactName"
+                name="name"
+                type="text"
+                className="rounded-xl"
+                placeholder="e.g. Jane Smith"
+                autoComplete="name"
+                value={contactName}
+                onChange={(e) => setContactName(e.target.value)}
+                onBlur={async () => {
+                  if (!cart || savingContact) return;
+                  const email = contactEmail.trim() || undefined;
+                  const phone = contactPhone.trim() || undefined;
+                  const name = contactName.trim() || undefined;
+                  const forVal = cakeFor.trim() || undefined;
+                  const occ = occasion.trim() || undefined;
+                  const unchanged =
+                    email === (cart.contactEmail ?? "") &&
+                    phone === (cart.contactPhone ?? "") &&
+                    name === (cart.contactName ?? "") &&
+                    forVal === (cart.cakeFor ?? "") &&
+                    occ === (cart.occasion ?? "");
+                  if (unchanged) return;
+                  setSavingContact(true);
+                  try {
+                    await setContact({ cartId: cart._id, email, phone, contactName: name, cakeFor: forVal, occasion: occ });
+                    setMessage("Contact info saved.");
+                  } catch (err) {
+                    setMessage(err instanceof Error ? err.message : "Save failed");
+                  } finally {
+                    setSavingContact(false);
+                  }
+                }}
+              />
+            </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="contactEmail">
@@ -923,14 +982,25 @@ function CheckoutContent() {
                     if (!cart || savingContact) return;
                     const email = contactEmail.trim() || undefined;
                     const phone = contactPhone.trim() || undefined;
-                    if (email === (cart.contactEmail ?? "") && phone === (cart.contactPhone ?? ""))
-                      return;
+                    const name = contactName.trim() || undefined;
+                    const forVal = cakeFor.trim() || undefined;
+                    const occ = occasion.trim() || undefined;
+                    const unchanged =
+                      email === (cart.contactEmail ?? "") &&
+                      phone === (cart.contactPhone ?? "") &&
+                      name === (cart.contactName ?? "") &&
+                      forVal === (cart.cakeFor ?? "") &&
+                      occ === (cart.occasion ?? "");
+                    if (unchanged) return;
                     setSavingContact(true);
                     try {
                       await setContact({
                         cartId: cart._id,
                         email,
                         phone,
+                        contactName: name,
+                        cakeFor: forVal,
+                        occasion: occ,
                       });
                       setMessage("Contact info saved.");
                     } catch (err) {
@@ -958,14 +1028,171 @@ function CheckoutContent() {
                     if (!cart || savingContact) return;
                     const email = contactEmail.trim() || undefined;
                     const phone = contactPhone.trim() || undefined;
-                    if (email === (cart.contactEmail ?? "") && phone === (cart.contactPhone ?? ""))
-                      return;
+                    const name = contactName.trim() || undefined;
+                    const forVal = cakeFor.trim() || undefined;
+                    const occ = occasion.trim() || undefined;
+                    const unchanged =
+                      email === (cart.contactEmail ?? "") &&
+                      phone === (cart.contactPhone ?? "") &&
+                      name === (cart.contactName ?? "") &&
+                      forVal === (cart.cakeFor ?? "") &&
+                      occ === (cart.occasion ?? "");
+                    if (unchanged) return;
                     setSavingContact(true);
                     try {
                       await setContact({
                         cartId: cart._id,
                         email,
                         phone,
+                        contactName: name,
+                        cakeFor: forVal,
+                        occasion: occ,
+                      });
+                      setMessage("Contact info saved.");
+                    } catch (err) {
+                      setMessage(err instanceof Error ? err.message : "Save failed");
+                    } finally {
+                      setSavingContact(false);
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            <div className="space-y-3 pt-2">
+              <div className="space-y-2">
+                <Label htmlFor="cakeFor">Who is this cake for? (optional)</Label>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant={cakeFor.toLowerCase() === "myself" ? "default" : "outline"}
+                    size="sm"
+                    className="rounded-full"
+                    onClick={() => {
+                      setCakeFor("Myself");
+                      if (cart && !savingContact) {
+                        setSavingContact(true);
+                        setContact({
+                          cartId: cart._id,
+                          email: contactEmail.trim() || undefined,
+                          phone: contactPhone.trim() || undefined,
+                          contactName: contactName.trim() || undefined,
+                          cakeFor: "Myself",
+                          occasion: occasion.trim() || undefined,
+                        })
+                          .then(() => setMessage("Contact info saved."))
+                          .catch((err) => setMessage(err instanceof Error ? err.message : "Save failed"))
+                          .finally(() => setSavingContact(false));
+                      }
+                    }}
+                  >
+                    For myself
+                  </Button>
+                </div>
+                <Input
+                  id="cakeFor"
+                  name="cakeFor"
+                  type="text"
+                  className="rounded-xl"
+                  placeholder="e.g. Sarah, John's birthday"
+                  value={cakeFor}
+                  onChange={(e) => setCakeFor(e.target.value)}
+                  onBlur={async () => {
+                    if (!cart || savingContact) return;
+                    const email = contactEmail.trim() || undefined;
+                    const phone = contactPhone.trim() || undefined;
+                    const name = contactName.trim() || undefined;
+                    const forVal = cakeFor.trim() || undefined;
+                    const occ = occasion.trim() || undefined;
+                    const unchanged =
+                      email === (cart.contactEmail ?? "") &&
+                      phone === (cart.contactPhone ?? "") &&
+                      name === (cart.contactName ?? "") &&
+                      forVal === (cart.cakeFor ?? "") &&
+                      occ === (cart.occasion ?? "");
+                    if (unchanged) return;
+                    setSavingContact(true);
+                    try {
+                      await setContact({
+                        cartId: cart._id,
+                        email,
+                        phone,
+                        contactName: name,
+                        cakeFor: forVal,
+                        occasion: occ,
+                      });
+                      setMessage("Contact info saved.");
+                    } catch (err) {
+                      setMessage(err instanceof Error ? err.message : "Save failed");
+                    } finally {
+                      setSavingContact(false);
+                    }
+                  }}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="occasion">Occasion (optional)</Label>
+                <div className="flex flex-wrap gap-2">
+                  {["Birthday", "Anniversary", "Just because"].map((opt) => (
+                    <Button
+                      key={opt}
+                      type="button"
+                      variant={occasion === opt ? "default" : "outline"}
+                      size="sm"
+                      className="rounded-full"
+                      onClick={() => {
+                        setOccasion(occasion === opt ? "" : opt);
+                        if (cart && !savingContact) {
+                          setSavingContact(true);
+                          const newOcc = occasion === opt ? undefined : opt;
+                          setContact({
+                            cartId: cart._id,
+                            email: contactEmail.trim() || undefined,
+                            phone: contactPhone.trim() || undefined,
+                            contactName: contactName.trim() || undefined,
+                            cakeFor: cakeFor.trim() || undefined,
+                            occasion: newOcc,
+                          })
+                            .then(() => setMessage("Contact info saved."))
+                            .catch((err) => setMessage(err instanceof Error ? err.message : "Save failed"))
+                            .finally(() => setSavingContact(false));
+                        }
+                      }}
+                    >
+                      {opt}
+                    </Button>
+                  ))}
+                </div>
+                <Input
+                  id="occasion"
+                  name="occasion"
+                  type="text"
+                  className="rounded-xl"
+                  placeholder="Other"
+                  value={occasion}
+                  onChange={(e) => setOccasion(e.target.value)}
+                  onBlur={async () => {
+                    if (!cart || savingContact) return;
+                    const email = contactEmail.trim() || undefined;
+                    const phone = contactPhone.trim() || undefined;
+                    const name = contactName.trim() || undefined;
+                    const forVal = cakeFor.trim() || undefined;
+                    const occ = occasion.trim() || undefined;
+                    const unchanged =
+                      email === (cart.contactEmail ?? "") &&
+                      phone === (cart.contactPhone ?? "") &&
+                      name === (cart.contactName ?? "") &&
+                      forVal === (cart.cakeFor ?? "") &&
+                      occ === (cart.occasion ?? "");
+                    if (unchanged) return;
+                    setSavingContact(true);
+                    try {
+                      await setContact({
+                        cartId: cart._id,
+                        email,
+                        phone,
+                        contactName: name,
+                        cakeFor: forVal,
+                        occasion: occ,
                       });
                       setMessage("Contact info saved.");
                     } catch (err) {
@@ -1034,20 +1261,30 @@ function CheckoutContent() {
                 ) : (addresses ?? []).length > 0 && !showAddAddress ? (
                   <div className="space-y-2">
                     <Label className="text-base">Saved addresses</Label>
+                    {selectedAddressId && (
+                      <p className="text-xs text-muted-foreground">
+                        Your selected address will be used for delivery.
+                      </p>
+                    )}
                     <div className="space-y-2">
                       {(addresses ?? []).map((address) => (
                         <div
                           key={address._id}
-                          className="flex items-center justify-between gap-2 rounded border p-2 text-sm transition-colors hover:bg-muted/50"
+                          className={`flex items-center justify-between gap-2 rounded-xl border p-3 text-sm transition-all ${
+                            selectedAddressId === address._id
+                              ? "border-primary bg-primary/5 ring-2 ring-primary/30"
+                              : "hover:bg-muted/50"
+                          }`}
                         >
-                          <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                          <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
                             <input
                               type="radio"
                               name="selectedAddress"
                               checked={selectedAddressId === address._id}
                               onChange={() => setSelectedAddressId(address._id as string)}
+                              className="h-4 w-4"
                             />
-                            <span className="truncate">{address.formatted}</span>
+                            <span className="min-w-0 truncate">{address.formatted}</span>
                           </label>
                           {!address.ownerId?.startsWith("email:") &&
                             !address.ownerId?.startsWith("import:") && (
@@ -1322,16 +1559,6 @@ function CheckoutContent() {
                     <p>No available slots for this date.</p>
                     {(slots?.blocked ?? []).length > 0 && (
                       <div className="space-y-0.5 text-amber-600">
-                        {slots.isSameDay === true && (slots.blocked ?? []).some((b) => b.reason === "LEAD_TIME") && (
-                          <p>
-                            Same day orders must be received by {slots?.cutoffForDebug ? formatSlotTime(slots.cutoffForDebug) : "store cutoff"}.
-                          </p>
-                        )}
-                        {slots.isSameDay === true && (slots.blocked ?? []).some((b) => b.reason === "CUTOFF") && (
-                          <p>
-                            Same day orders must be received by {slots?.cutoffForDebug ? formatSlotTime(slots.cutoffForDebug) : "store cutoff"}. Cutoff has passed — try tomorrow.
-                          </p>
-                        )}
                         {(slots.blocked ?? []).some((b) => b.reason === "FULL") && (
                           <p>Slots are full.</p>
                         )}
@@ -1344,7 +1571,8 @@ function CheckoutContent() {
                 )}
               </div>
             )}
-            {selectedDate && slots && needsSchedulingForMode && slots.isSameDay === true && (
+            {selectedDate && slots && needsSchedulingForMode && slots.isSameDay === true &&
+              (slots?.available ?? []).length > 0 && (
               <div className="mt-3 rounded-lg border bg-amber-50/50 px-3 py-2 text-xs dark:bg-amber-950/20">
                 {typeof slots.minutesUntilCutoff === "number" && slots.minutesUntilCutoff > 0 ? (
                   <SameDayCutoffTimer
@@ -1361,21 +1589,6 @@ function CheckoutContent() {
                     Same day orders must be received by store cutoff.
                   </p>
                 )}
-              </div>
-            )}
-            {selectedDate && slots && needsSchedulingForMode && slots.nextDayCutoffActive === true && (
-              <div className="mt-3 rounded-lg border bg-amber-50/50 px-3 py-2 text-xs dark:bg-amber-950/20">
-                <p className="tabular-nums text-amber-700 dark:text-amber-300">
-                  Orders placed late in the day — afternoon slots only for tomorrow.
-                </p>
-              </div>
-            )}
-            {selectedDate && slots && needsSchedulingForMode && slots.nextDayDebug && !slots.nextDayCutoffActive && (
-              <div className="mt-3 rounded-lg border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                <p>
-                  Morning slots for tomorrow will be hidden after {slots.nextDayDebug.cutoffAfter ?? "—"} (store time).
-                  {slots.nextDayDebug.storeTime && ` Current: ${slots.nextDayDebug.storeTime}.`}
-                </p>
               </div>
             )}
           </CardContent>
@@ -1533,10 +1746,17 @@ function CheckoutContent() {
                 <ul className="space-y-2 text-sm">
                   {cart.items.map((item) => {
                     const lineCents = item.unitPriceSnapshotCents * item.qty;
+                    const base =
+                      item.variantLabel
+                        ? `${productDisplayName(item.productName ?? "")} (${item.variantLabel})`
+                        : productDisplayName(item.productName ?? "");
+                    const addons = (item as { modifierOptionNames?: string[] }).modifierOptionNames ?? [];
+                    const fullLine =
+                      addons.length > 0 ? `${base} + ${addons.join(", ")}` : base;
                     return (
                       <li key={item._id} className="flex justify-between gap-2">
                         <span>
-                          {productDisplayName(item.productName, item.variantName)} × {item.qty}
+                          {fullLine} × {item.qty}
                         </span>
                         <span>{fmt(lineCents)}</span>
                       </li>

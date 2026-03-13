@@ -135,6 +135,22 @@ export default function OrderStatusByTokenPage() {
         </Card>
       )}
 
+      {((order as { cakeFor?: string }).cakeFor || (order as { occasion?: string }).occasion) && (
+        <Card className="rounded-2xl">
+          <CardHeader>
+            <CardTitle className="font-display text-2xl text-brand-text">Gift details</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1 text-sm">
+            {(order as { cakeFor?: string }).cakeFor && (
+              <p><span className="text-muted-foreground">For:</span> {(order as { cakeFor?: string }).cakeFor}</p>
+            )}
+            {(order as { occasion?: string }).occasion && (
+              <p><span className="text-muted-foreground">Occasion:</span> {(order as { occasion?: string }).occasion}</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="rounded-2xl">
         <CardHeader>
           <CardTitle className="font-display text-2xl text-brand-text">Items</CardTitle>

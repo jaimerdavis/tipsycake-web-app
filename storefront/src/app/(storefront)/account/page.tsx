@@ -312,6 +312,14 @@ export default function AccountPage() {
                             )
                             .join(", ")}
                         </p>
+                        {(order as { cakeFor?: string }).cakeFor || (order as { occasion?: string }).occasion ? (
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {[(order as { cakeFor?: string }).cakeFor && `For: ${(order as { cakeFor?: string }).cakeFor}`,
+                              (order as { occasion?: string }).occasion && `Occasion: ${(order as { occasion?: string }).occasion}`]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </p>
+                        ) : null}
                         <span className="mt-1 block font-semibold">
                           {dollars(order.pricingSnapshot.totalCents)}
                         </span>

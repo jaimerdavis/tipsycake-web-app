@@ -422,6 +422,20 @@ export function buildContactInfoHtml(
   </div>`;
 }
 
+/** Build optional gift/occasion block for owner notification. */
+export function buildGiftOccasionHtml(cakeFor?: string | null, occasion?: string | null): string {
+  const hasCakeFor = cakeFor?.trim();
+  const hasOccasion = occasion?.trim();
+  if (!hasCakeFor && !hasOccasion) return "";
+  const rows: string[] = [];
+  if (hasCakeFor) rows.push(`<tr><td style="padding: 8px 0; font-weight: bold;">Cake for</td><td>${escapeHtml(hasCakeFor)}</td></tr>`);
+  if (hasOccasion) rows.push(`<tr><td style="padding: 8px 0; font-weight: bold;">Occasion</td><td>${escapeHtml(hasOccasion)}</td></tr>`);
+  return `<div style="margin: 16px 0;">
+    <p style="font-weight: bold; margin-bottom: 8px; font-size: 15px;">Gift / Occasion</p>
+    <table style="width: 100%; border-collapse: collapse;">${rows.join("")}</table>
+  </div>`;
+}
+
 /** Build tracking row for status update. */
 export function buildTrackingRowHtml(carrier?: string, trackingNumber?: string, trackingUrl?: string | null): string {
   if (!carrier || !trackingNumber) return "";
@@ -510,6 +524,8 @@ export async function renderOwnerNotification(
     contactEmail?: string | null;
     contactPhone?: string | null;
     contactName?: string | null;
+    cakeFor?: string | null;
+    occasion?: string | null;
     items?: {
       productSnapshot?: { name?: string };
       variantSnapshot?: { label?: string };
@@ -548,7 +564,9 @@ export async function renderOwnerNotification(
     scheduledSlot: slot,
     scheduleBlock,
     addressSection,
-    contactInfo: buildContactInfoHtml(opts.contactEmail, opts.contactPhone, opts.contactName),
+    contactInfo:
+      buildContactInfoHtml(opts.contactEmail, opts.contactPhone, opts.contactName) +
+      buildGiftOccasionHtml(opts.cakeFor, opts.occasion),
     adminLink: `${opts.siteUrl}/admin/orders`,
     orderDetails: opts.items?.length ? buildOrderItemsForOwnerHtml(opts.items) : "",
     total: totalFormatted,
