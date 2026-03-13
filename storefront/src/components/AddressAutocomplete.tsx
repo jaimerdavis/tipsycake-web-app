@@ -103,14 +103,33 @@ export function AddressAutocomplete({
       return;
     }
 
-    window.initGooglePlaces = () => {
-      initAutocomplete();
-    };
+    const callback = () => initAutocomplete();
+    window.initGooglePlaces = callback;
 
     const existingScript = document.querySelector(
       'script[src*="maps.googleapis.com/maps/api/js"]'
     );
-    if (!existingScript) {
+    if (existingScript) {
+      if (window.google?.maps?.places) {
+        initAutocomplete();
+      } else {
+        // Script may be loading; poll until Google is ready (in case callback differs)
+        const id = setInterval(() => {
+          if (window.google?.maps?.places) {
+            clearInterval(id);
+            initAutocomplete();
+          }
+        }, 100);
+        const timeout = setTimeout(() => clearInterval(id), 5000);
+        return () => {
+          clearInterval(id);
+          clearTimeout(timeout);
+          if (window.initGooglePlaces === callback) {
+            delete window.initGooglePlaces;
+          }
+        };
+      }
+    } else {
       const script = document.createElement("script");
       script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&callback=initGooglePlaces`;
       script.async = true;
@@ -119,7 +138,9 @@ export function AddressAutocomplete({
     }
 
     return () => {
-      delete window.initGooglePlaces;
+      if (window.initGooglePlaces === callback) {
+        window.initGooglePlaces = () => {};
+      }
     };
   }, [initAutocomplete, apiKey]);
 

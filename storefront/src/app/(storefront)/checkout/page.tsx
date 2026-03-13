@@ -1554,20 +1554,20 @@ function CheckoutContent() {
                       <span>-{fmt(pricing.discountCents)}</span>
                     </div>
                   )}
-                  {selectedMode === "delivery" && eligibility && (
+                  {selectedMode === "delivery" && (
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">
-                        Delivery fee{eligibility.delivery.distanceMiles != null ? ` (${eligibility.delivery.distanceMiles} mi)` : ""}
+                        Delivery fee{eligibility?.delivery.distanceMiles != null ? ` (${eligibility.delivery.distanceMiles} mi)` : ""}
                       </span>
-                      <span>{fmt(eligibility.delivery.feeCents)}</span>
+                      <span>{eligibility ? fmt(eligibility.delivery.feeCents) : "—"}</span>
                     </div>
                   )}
-                  {selectedMode === "shipping" && eligibility && eligibility.shipping.feeCents > 0 && (
+                  {selectedMode === "shipping" && (eligibility === undefined || eligibility.shipping.feeCents > 0) && (
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">
-                        Shipping{cakeCount > 1 ? ` (${cakeCount} cakes × ${fmt(Math.round(eligibility.shipping.feeCents / cakeCount))})` : ""}
+                        Shipping{cakeCount > 1 && eligibility ? ` (${cakeCount} cakes × ${fmt(Math.round(eligibility.shipping.feeCents / cakeCount))})` : ""}
                       </span>
-                      <span>{fmt(eligibility.shipping.feeCents)}</span>
+                      <span>{eligibility ? fmt(eligibility.shipping.feeCents) : "—"}</span>
                     </div>
                   )}
                   {(cart.tipCents ?? 0) > 0 && (
