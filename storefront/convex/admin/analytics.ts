@@ -71,3 +71,41 @@ export const dashboard = query({
     };
   },
 });
+
+/** List abandoned carts for Admin → Abandoned Carts page. */
+export const listAbandonedCarts = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireRole(ctx, "admin", "manager");
+
+    const carts = await ctx.db
+      .query("carts")
+      .withIndex("by_status", (q) => q.eq("status", "abandoned"))
+      .collect();
+
+    const rows: {
+      cartId: string;
+      contactEmail?: string;
+      contactPhone?: string;
+      itemCount: number;
+      updatedAt: number;
+    }[] = [];
+
+    for (const cart of carts) {
+      const items = await ctx.db
+        .query("cartItems")
+        .withIndex("by_cart", (q) => q.eq("cartId", cart._id))
+        .collect();
+      rows.push({
+        cartId: cart._id,
+        contactEmail: cart.contactEmail,
+        contactPhone: cart.contactPhone,
+        itemCount: items.length,
+        updatedAt: cart.updatedAt,
+      });
+    }
+
+    rows.sort((a, b) => b.updatedAt - a.updatedAt);
+    return rows;
+  },
+});

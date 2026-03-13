@@ -23,6 +23,7 @@ const navItems = [
   { href: "/admin/drivers", label: "Drivers" },
   { href: "/admin/tracking", label: "Tracking" },
   { href: "/admin/analytics", label: "Analytics" },
+  { href: "/admin/abandoned-carts", label: "Abandoned Carts" },
   { href: "/admin/audit-logs", label: "Audit Logs" },
   { href: "/admin/settings/email", label: "Email Settings" },
   { href: "/admin/settings/email/blast", label: "Email Blast" },
