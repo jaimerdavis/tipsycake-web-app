@@ -54,6 +54,7 @@ export const DEFAULT_BODIES: Record<EmailTemplateType, string> = {
     <tr><td style="padding: 8px 0; font-weight: bold;">Fulfillment</td><td>{{fulfillmentMode}}</td></tr>
     <tr><td style="padding: 8px 0; font-weight: bold;">Scheduled</td><td>{{scheduledSlot}}</td></tr>
     <tr><td style="padding: 8px 0; font-weight: bold;">Total</td><td>{{total}}</td></tr>
+    {{deliveryAddress}}
     {{contactInfo}}
   </table>
   <p style="margin-top: 24px;"><a href="{{adminLink}}" style="color: #e11d48; font-weight: bold;">View in Admin</a></p>
@@ -89,7 +90,7 @@ export const DEFAULT_BODIES: Record<EmailTemplateType, string> = {
 
 export const PLACEHOLDER_DOCS: Record<EmailTemplateType, string[]> = {
   orderConfirmation: ["{{storeName}}", "{{orderNumber}}", "{{fulfillmentMode}}", "{{scheduledSlot}}", "{{total}}", "{{statusLink}}", "{{orderDetails}}", "{{signature}}"],
-  ownerNotification: ["{{storeName}}", "{{orderNumber}}", "{{fulfillmentMode}}", "{{scheduledSlot}}", "{{total}}", "{{contactInfo}}", "{{adminLink}}", "{{orderDetails}}", "{{savingsNote}}"],
+  ownerNotification: ["{{storeName}}", "{{orderNumber}}", "{{fulfillmentMode}}", "{{scheduledSlot}}", "{{total}}", "{{deliveryAddress}}", "{{contactInfo}}", "{{adminLink}}", "{{orderDetails}}", "{{savingsNote}}"],
   statusUpdate: ["{{storeName}}", "{{orderNumber}}", "{{statusLabel}}", "{{statusMessage}}", "{{trackingRow}}", "{{signature}}"],
   paymentFailed: ["{{storeName}}", "{{reason}}", "{{signature}}"],
   abandonedCart: ["{{storeName}}", "{{cartLink}}", "{{productDetails}}", "{{couponBlock}}", "{{signature}}"],
@@ -247,6 +248,7 @@ export async function renderOwnerNotification(
     fulfillmentMode: string;
     scheduledSlotKey?: string | null;
     totalCents: number;
+    deliveryAddress?: string | null;
     contactEmail?: string | null;
     contactPhone?: string | null;
     items?: {
@@ -267,12 +269,17 @@ export async function renderOwnerNotification(
         return `${date} at ${time}`;
       })()
     : "TBD";
+  const deliveryAddressRow =
+    opts.deliveryAddress?.trim()
+      ? `<tr><td style="padding: 8px 0; font-weight: bold;">Delivery address</td><td>${opts.deliveryAddress}</td></tr>`
+      : "";
   const vars: Record<string, string> = {
     storeName: opts.storeName,
     orderNumber: opts.orderNumber,
     fulfillmentMode: opts.fulfillmentMode,
     scheduledSlot: slot,
     total: `$${(opts.totalCents / 100).toFixed(2)}`,
+    deliveryAddress: deliveryAddressRow,
     contactInfo: buildContactInfoHtml(opts.contactEmail, opts.contactPhone),
     adminLink: `${opts.siteUrl}/admin/orders`,
     orderDetails: opts.items?.length ? buildOrderItemsHtml(opts.items) : "",
@@ -510,6 +517,7 @@ export const SAMPLE_VARS: Record<EmailTemplateType, Record<string, string>> = {
     fulfillmentMode: "Delivery",
     scheduledSlot: "2025-03-15 at 14:00",
     total: "$52.50",
+    deliveryAddress: "<tr><td style=\"padding: 8px 0; font-weight: bold;\">Delivery address</td><td>123 Main St, Fort Lauderdale, FL 33301</td></tr>",
     contactInfo: "<tr><td style=\"padding: 8px 0; font-weight: bold;\">Customer Email</td><td>customer@example.com</td></tr><tr><td style=\"padding: 8px 0; font-weight: bold;\">Customer Phone</td><td>(555) 123-4567</td></tr>",
     adminLink: "https://order.tipsycake.com/admin/orders",
     orderDetails: "",

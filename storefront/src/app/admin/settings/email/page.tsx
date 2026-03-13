@@ -11,6 +11,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -18,8 +23,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { ChevronRight } from "lucide-react";
 
 const EMAIL_ABANDONED_KEYS = [
+  "emailAbandonedCartEnabled",
   "emailAbandonedCartIncentiveEnabled",
   "emailAbandonedCartCouponCents",
   "emailAbandonedCartCouponExpiryHours",
@@ -76,6 +83,7 @@ export default function EmailSettingsPage() {
       setForm({
         ...settings,
         notifyOwnerOnOrder: settings.notifyOwnerOnOrder ?? "true",
+        emailAbandonedCartEnabled: settings.emailAbandonedCartEnabled ?? "true",
         emailAbandonedCartIncentiveEnabled: settings.emailAbandonedCartIncentiveEnabled ?? "true",
         emailAbandonedCartCouponCents: settings.emailAbandonedCartCouponCents ?? "100",
         emailAbandonedCartCouponExpiryHours: settings.emailAbandonedCartCouponExpiryHours ?? "24",
@@ -229,54 +237,82 @@ export default function EmailSettingsPage() {
         </CardContent>
       </Card>
 
-      {/* ── Abandoned Cart Incentive ── */}
+      {/* ── Abandoned Cart ── */}
       <Card>
         <CardHeader>
-          <CardTitle>Abandoned Cart Incentive</CardTitle>
+          <CardTitle>Abandoned Cart Emails</CardTitle>
           <CardDescription>
-            Generate a unique coupon when sending abandoned cart emails. $1 off, expires in 24 hours by default.
+            When a cart is left for 2+ hours with items and contact info, send a reminder email (and optionally SMS). Runs every 15 minutes. One email per cart — all items in the cart are listed together.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-6">
           <div className="flex items-center gap-3">
             <input
               type="checkbox"
-              id="emailAbandonedCartIncentiveEnabled"
-              checked={(form.emailAbandonedCartIncentiveEnabled ?? "true") !== "false"}
+              id="emailAbandonedCartEnabled"
+              checked={(form.emailAbandonedCartEnabled ?? "true") !== "false"}
               onChange={(e) =>
-                updateField("emailAbandonedCartIncentiveEnabled", e.target.checked ? "true" : "false")
+                updateField("emailAbandonedCartEnabled", e.target.checked ? "true" : "false")
               }
               className="h-4 w-4 rounded border-input"
             />
-            <Label htmlFor="emailAbandonedCartIncentiveEnabled" className="cursor-pointer font-normal">
-              Include coupon in abandoned cart emails
+            <Label htmlFor="emailAbandonedCartEnabled" className="cursor-pointer font-normal">
+              Send abandoned cart reminder emails
             </Label>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="emailAbandonedCartCouponCents">Discount amount (cents)</Label>
-              <Input
-                id="emailAbandonedCartCouponCents"
-                type="number"
-                min={0}
-                value={form.emailAbandonedCartCouponCents ?? "100"}
-                onChange={(e) => updateField("emailAbandonedCartCouponCents", e.target.value)}
-                placeholder="100"
+          <div className="space-y-4 border-t pt-4">
+            <h4 className="text-sm font-medium">Coupon incentive</h4>
+            <p className="text-xs text-muted-foreground">
+              Optionally include a unique one-time coupon to encourage recovery. Each abandoned cart gets its own code.
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="emailAbandonedCartIncentiveEnabled"
+                checked={(form.emailAbandonedCartIncentiveEnabled ?? "true") !== "false"}
+                onChange={(e) =>
+                  updateField("emailAbandonedCartIncentiveEnabled", e.target.checked ? "true" : "false")
+                }
+                className="h-4 w-4 rounded border-input"
               />
-              <p className="text-xs text-muted-foreground">100 = $1 off</p>
+              <Label htmlFor="emailAbandonedCartIncentiveEnabled" className="cursor-pointer font-normal">
+                Include coupon in abandoned cart emails
+              </Label>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="emailAbandonedCartCouponExpiryHours">Expiry (hours)</Label>
-              <Input
-                id="emailAbandonedCartCouponExpiryHours"
-                type="number"
-                min={1}
-                max={168}
-                value={form.emailAbandonedCartCouponExpiryHours ?? "24"}
-                onChange={(e) => updateField("emailAbandonedCartCouponExpiryHours", e.target.value)}
-                placeholder="24"
-              />
-              <p className="text-xs text-muted-foreground">1–168 hours (24 = 1 day)</p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="emailAbandonedCartCouponCents">Discount amount ($)</Label>
+                <Input
+                  id="emailAbandonedCartCouponCents"
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={
+                    form.emailAbandonedCartCouponCents
+                      ? (Number(form.emailAbandonedCartCouponCents) / 100).toFixed(2)
+                      : "1.00"
+                  }
+                  onChange={(e) => {
+                    const dollars = parseFloat(e.target.value) || 0;
+                    updateField("emailAbandonedCartCouponCents", String(Math.round(dollars * 100)));
+                  }}
+                  placeholder="1.00"
+                />
+                <p className="text-xs text-muted-foreground">e.g. 1 = $1 off, 5 = $5 off</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="emailAbandonedCartCouponExpiryHours">Coupon expires in (hours)</Label>
+                <Input
+                  id="emailAbandonedCartCouponExpiryHours"
+                  type="number"
+                  min={1}
+                  max={168}
+                  value={form.emailAbandonedCartCouponExpiryHours ?? "24"}
+                  onChange={(e) => updateField("emailAbandonedCartCouponExpiryHours", e.target.value)}
+                  placeholder="24"
+                />
+                <p className="text-xs text-muted-foreground">1–168 hours (24 = 1 day)</p>
+              </div>
             </div>
           </div>
         </CardContent>
@@ -287,10 +323,10 @@ export default function EmailSettingsPage() {
         <CardHeader>
           <CardTitle>Email Templates</CardTitle>
           <CardDescription>
-            Customize subjects and HTML bodies. Placeholders: {`{{orderNumber}}`}, {`{{storeName}}`}, {`{{productDetails}}`}, {`{{couponBlock}}`}, etc.
+            Customize subjects and HTML bodies. Placeholders: {`{{orderNumber}}`}, {`{{storeName}}`}, {`{{productDetails}}`}, {`{{couponBlock}}`}, {`{{deliveryAddress}}`}, etc.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-2">
           {templateConfig?.map((t) => {
             const typeLabel =
               t.type === "orderConfirmation"
@@ -304,68 +340,77 @@ export default function EmailSettingsPage() {
                       : "Abandoned cart";
             const sending = testEmailSending === t.type;
             return (
-              <div key={t.type} className="space-y-3 rounded-xl border bg-muted/30 p-4">
-                <div className="flex items-center justify-between gap-4">
-                  <h3 className="font-medium">{typeLabel}</h3>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      placeholder="Send test to"
-                      type="email"
-                      id={`test-${t.type}`}
-                      className="h-8 w-40 text-sm"
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={sending}
-                      onClick={async () => {
-                        const input = document.getElementById(`test-${t.type}`) as HTMLInputElement;
-                        const to = input?.value?.trim();
-                        if (!to) return;
-                        setTestEmailSending(t.type);
-                        try {
-                          await sendTestEmail({ templateType: t.type, toEmail: to });
-                          setMessage(`Test email sent to ${to}`);
-                        } catch (err) {
-                          setMessage(err instanceof Error ? err.message : "Failed to send test");
-                        } finally {
-                          setTestEmailSending(null);
-                        }
-                      }}
-                    >
-                      {sending ? "Sending…" : "Send test"}
-                    </Button>
-                  </div>
+              <Collapsible key={t.type} defaultOpen={false}>
+                <div className="rounded-xl border bg-muted/30">
+                  <CollapsibleTrigger className="group flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-muted/50 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+                      <h3 className="font-medium">{typeLabel}</h3>
+                    </div>
+                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                      <Input
+                        placeholder="Send test to"
+                        type="email"
+                        id={`test-${t.type}`}
+                        className="h-8 w-32 text-sm"
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={sending}
+                        onClick={async () => {
+                          const input = document.getElementById(`test-${t.type}`) as HTMLInputElement;
+                          const to = input?.value?.trim();
+                          if (!to) return;
+                          setTestEmailSending(t.type);
+                          try {
+                            await sendTestEmail({ templateType: t.type, toEmail: to });
+                            setMessage(`Test email sent to ${to}`);
+                          } catch (err) {
+                            setMessage(err instanceof Error ? err.message : "Failed to send test");
+                          } finally {
+                            setTestEmailSending(null);
+                          }
+                        }}
+                      >
+                        {sending ? "Sending…" : "Send test"}
+                      </Button>
+                    </div>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="space-y-3 border-t px-4 pb-4 pt-3">
+                      <div className="space-y-2">
+                        <Label htmlFor={t.subjectKey} className="text-xs">
+                          Subject
+                        </Label>
+                        <Input
+                          id={t.subjectKey}
+                          value={form[t.subjectKey] ?? ""}
+                          onChange={(e) => updateField(t.subjectKey, e.target.value)}
+                          placeholder={t.subject}
+                          className="font-mono text-sm"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={t.bodyKey} className="text-xs">
+                          Body (HTML)
+                        </Label>
+                        <Textarea
+                          id={t.bodyKey}
+                          value={form[t.bodyKey] ?? ""}
+                          onChange={(e) => updateField(t.bodyKey, e.target.value)}
+                          placeholder={t.body.slice(0, 80) + "…"}
+                          className="min-h-[120px] font-mono text-sm"
+                          rows={6}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Placeholders: {t.placeholders.join(", ")}
+                      </p>
+                    </div>
+                  </CollapsibleContent>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor={t.subjectKey} className="text-xs">
-                    Subject
-                  </Label>
-                  <Input
-                    id={t.subjectKey}
-                    value={form[t.subjectKey] ?? ""}
-                    onChange={(e) => updateField(t.subjectKey, e.target.value)}
-                    placeholder={t.subject}
-                    className="font-mono text-sm"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor={t.bodyKey} className="text-xs">
-                    Body (HTML)
-                  </Label>
-                  <Textarea
-                    id={t.bodyKey}
-                    value={form[t.bodyKey] ?? ""}
-                    onChange={(e) => updateField(t.bodyKey, e.target.value)}
-                    placeholder={t.body.slice(0, 80) + "…"}
-                    className="min-h-[120px] font-mono text-sm"
-                    rows={6}
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Placeholders: {t.placeholders.join(", ")}
-                </p>
-              </div>
+              </Collapsible>
             );
           })}
         </CardContent>

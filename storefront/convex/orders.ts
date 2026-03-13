@@ -448,6 +448,14 @@ async function finalizeFromPaymentEvent(
   }
 
   if (storeEmail && notifyOwner) {
+    let deliveryAddress: string | null = null;
+    if (
+      (finalOrder.fulfillmentMode === "delivery" || finalOrder.fulfillmentMode === "shipping") &&
+      finalOrder.addressId
+    ) {
+      const addr = await ctx.db.get(finalOrder.addressId as Id<"addresses">);
+      deliveryAddress = addr?.formatted ?? null;
+    }
     const rendered = await renderOwnerNotification(ctx, {
       storeName,
       siteUrl,
@@ -455,6 +463,7 @@ async function finalizeFromPaymentEvent(
       fulfillmentMode: finalOrder.fulfillmentMode,
       totalCents: finalOrder.pricingSnapshot.totalCents,
       scheduledSlotKey: finalOrder.scheduledSlotKey,
+      deliveryAddress,
       contactEmail: finalOrder.contactEmail,
       contactPhone: finalOrder.contactPhone,
       items: orderItems,
@@ -844,6 +853,14 @@ export const completeFreeOrder = mutation({
     }
 
     if (storeEmail && notifyOwner) {
+      let deliveryAddress: string | null = null;
+      if (
+        (finalOrder.fulfillmentMode === "delivery" || finalOrder.fulfillmentMode === "shipping") &&
+        finalOrder.addressId
+      ) {
+        const addr = await ctx.db.get(finalOrder.addressId as Id<"addresses">);
+        deliveryAddress = addr?.formatted ?? null;
+      }
       const rendered = await renderOwnerNotification(ctx, {
         storeName,
         siteUrl,
@@ -851,6 +868,7 @@ export const completeFreeOrder = mutation({
         fulfillmentMode: finalOrder.fulfillmentMode,
         totalCents: finalOrder.pricingSnapshot.totalCents,
         scheduledSlotKey: finalOrder.scheduledSlotKey,
+        deliveryAddress,
         contactEmail: finalOrder.contactEmail,
         contactPhone: finalOrder.contactPhone,
         items: orderItemsForEmail,

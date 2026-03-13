@@ -100,14 +100,9 @@ function SameDayCutoffTimer({
     return () => clearInterval(id);
   }, [secondsLeft]);
 
-  const cutoffLabel = cutoffTime
-    ? ` (Order by ${formatSlotTime(cutoffTime)})`
-    : "";
-
   return (
     <p className="mt-1.5 font-medium tabular-nums">
-      Same-day order cutoff in {formatSecondsAsCountdown(secondsLeft)}
-      {cutoffLabel}
+      Same day orders must be received by {cutoffTime ? formatSlotTime(cutoffTime) : "store cutoff"} — {formatSecondsAsCountdown(secondsLeft)} left
     </p>
   );
 }
@@ -440,6 +435,23 @@ function CheckoutContent() {
   );
   const [selectedDate, setSelectedDate] = useState("");
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const autoSelectedSlotRef = useRef<string | null>(null);
+
+  // Auto-select first available slot when slots load (avoids "no slot selected" flow)
+  useEffect(() => {
+    if (!slots?.available?.length || slots.selectedSlotKey || !cart) return;
+    const firstKey = slots.available[0].slotKey;
+    if (autoSelectedSlotRef.current === firstKey) return;
+    autoSelectedSlotRef.current = firstKey;
+    createHold({ cartId: cart._id, slotKey: firstKey }).catch(() => {
+      autoSelectedSlotRef.current = null;
+    });
+  }, [slots?.available, slots?.selectedSlotKey, cart, createHold]);
+
+  // Reset auto-select ref when date changes so we can auto-select for new date
+  useEffect(() => {
+    autoSelectedSlotRef.current = null;
+  }, [selectedDate]);
 
   // Auto-select today when it's the first available date (so slots show without extra click)
   useEffect(() => {
@@ -510,7 +522,8 @@ function CheckoutContent() {
             <div className="space-y-3">
               <SignUpButton mode="modal" forceRedirectUrl="/checkout">
                 <Button className="w-full rounded-full bg-button text-stone-50 hover:bg-button-hover">
-                  Create Account - Track Orders and Get exclusive offers
+                  <span className="sm:hidden">Create a FREE Account</span>
+                  <span className="hidden sm:inline">Create Account — Track orders and get exclusive offers</span>
                 </Button>
               </SignUpButton>
               <div className="space-y-2">
@@ -540,7 +553,7 @@ function CheckoutContent() {
                 Are you sure?
               </AlertDialogTitle>
               <AlertDialogDescription>
-                Track your orders and get exclusive offers. Create an account for free.
+                Create a free account to track orders, or continue as guest.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter className="flex-col-reverse sm:flex-row gap-2">
@@ -1310,25 +1323,14 @@ function CheckoutContent() {
                     <p>No available slots for this date.</p>
                     {(slots?.blocked ?? []).length > 0 && (
                       <div className="space-y-0.5 text-amber-600">
-                        {(slots.blocked ?? []).some((b) => b.reason === "LEAD_TIME") && (
-                          <>
-                            <p>
-                              Order {(slots?.leadTimeHours ?? 5)}+ hours before slot time.
-                            </p>
-                            <p className="font-medium">
-                              Store time: {slots?.storeTimeForDebug ??
-                              new Date().toLocaleTimeString("en-US", {
-                                timeZone: "America/New_York",
-                                hour: "numeric",
-                                minute: "2-digit",
-                                hour12: true,
-                              }) + " America/New_York"}
-                            </p>
-                          </>
-                        )}
-                        {(slots.blocked ?? []).some((b) => b.reason === "CUTOFF") && (
+                        {slots.isSameDay === true && (slots.blocked ?? []).some((b) => b.reason === "LEAD_TIME") && (
                           <p>
-                            Same-day cutoff passed{slots?.cutoffForDebug ? ` (cutoff: ${slots.cutoffForDebug})` : ""}. Try tomorrow.
+                            Same day orders must be received by {slots?.cutoffForDebug ? formatSlotTime(slots.cutoffForDebug) : "store cutoff"}.
+                          </p>
+                        )}
+                        {slots.isSameDay === true && (slots.blocked ?? []).some((b) => b.reason === "CUTOFF") && (
+                          <p>
+                            Same day orders must be received by {slots?.cutoffForDebug ? formatSlotTime(slots.cutoffForDebug) : "store cutoff"}. Cutoff has passed — try tomorrow.
                           </p>
                         )}
                         {(slots.blocked ?? []).some((b) => b.reason === "FULL") && (
@@ -1352,12 +1354,12 @@ function CheckoutContent() {
                   />
                 ) : slots.cutoffForDebug ? (
                   <p className="tabular-nums text-amber-700 dark:text-amber-300">
-                    Order by {formatSlotTime(slots.cutoffForDebug)}
-                    {slots.isSameDay === true && typeof slots.minutesUntilCutoff === "number" && slots.minutesUntilCutoff <= 0 ? " — passed" : ""}
+                    Same day orders must be received by {formatSlotTime(slots.cutoffForDebug)}
+                    {slots.isSameDay === true && typeof slots.minutesUntilCutoff === "number" && slots.minutesUntilCutoff <= 0 ? ". Cutoff has passed — try tomorrow." : "."}
                   </p>
                 ) : (
                   <p className="tabular-nums text-amber-700 dark:text-amber-300">
-                    Order by store cutoff
+                    Same day orders must be received by store cutoff.
                   </p>
                 )}
               </div>

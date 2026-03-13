@@ -23,6 +23,8 @@ export const scanAndNotify = internalMutation({
     const now = Date.now();
     const settingsRows = await ctx.db.query("siteSettings").collect();
     const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+    const abandonedCartEnabled = settings.emailAbandonedCartEnabled !== "false";
+    if (!abandonedCartEnabled) return { notified: 0 };
     const storeName = settings.storeName ?? "TheTipsyCake";
     const smsEnabled = settings.smsEnabled !== "false";
     const incentiveEnabled = settings.emailAbandonedCartIncentiveEnabled !== "false";
