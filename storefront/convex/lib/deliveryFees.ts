@@ -64,18 +64,18 @@ export async function computeFeesForOrder(
     };
   }
 
-  const cached = await ctx.db
-    .query("addressCache")
-    .withIndex("by_address", (q) => q.eq("addressId", addressId))
-    .unique();
   const deliveryTiers = await ctx.db
     .query("deliveryTiers")
     .withIndex("by_enabled", (q) => q.eq("enabled", true))
     .collect();
 
-  const distanceMiles =
-    cached?.distanceMiles ??
-    haversineMiles(address.lat, address.lng, STORE_ORIGIN.lat, STORE_ORIGIN.lng);
+  // Always compute distance fresh — cache can be stale if STORE_ORIGIN changed
+  const distanceMiles = haversineMiles(
+    address.lat,
+    address.lng,
+    STORE_ORIGIN.lat,
+    STORE_ORIGIN.lng
+  );
 
   if (fulfillmentMode === "delivery" && distanceMiles <= deliveryMaxMiles) {
     const tier = deliveryTiers.find(

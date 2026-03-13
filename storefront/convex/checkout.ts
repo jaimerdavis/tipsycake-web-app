@@ -98,14 +98,14 @@ export const getEligibility = query({
       .withIndex("by_enabled", (q) => q.eq("enabled", true))
       .collect();
 
-    const distanceMiles =
-      cached?.distanceMiles ??
-      haversineMiles(
-        address.lat,
-        address.lng,
-        STORE_ORIGIN.lat,
-        STORE_ORIGIN.lng
-      );
+    // Always compute distance fresh. Cached distance can be stale (e.g. after STORE_ORIGIN change)
+    // and causes wrong mileage + auto-switch to shipping + layout jump when selecting saved address.
+    const distanceMiles = haversineMiles(
+      address.lat,
+      address.lng,
+      STORE_ORIGIN.lat,
+      STORE_ORIGIN.lng
+    );
 
     const hasMatchingTier =
       deliveryTiers.length > 0 &&
