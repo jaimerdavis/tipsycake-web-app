@@ -5,10 +5,12 @@ import { useAction, useMutation, useQuery } from "convex/react";
 
 import { api } from "../../../../convex/_generated/api";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 function fmt(cents: number) {
   return cents === 0 ? "Free" : `$${(cents / 100).toFixed(2)}`;
@@ -43,6 +45,9 @@ export default function AdminSchedulingPage() {
     shippingDuration: "60",
     slotTimes: "09:00\n10:00\n11:00\n12:00\n13:00\n14:00\n15:00\n16:00\n17:00",
     defaultMaxOrdersPerSlot: "3",
+    nextDayCutoffAfterHm: "",
+    nextDayMinSlotStart: "",
+    nextDayCutoffAlwaysApply: false,
   });
   const [deliveryConfigForm, setDeliveryConfigForm] = useState({
     deliveryMaxMiles: "20",
@@ -81,6 +86,9 @@ export default function AdminSchedulingPage() {
         defaultMaxOrdersPerSlot: typeof rules.defaultMaxOrdersPerSlot === "number"
           ? String(rules.defaultMaxOrdersPerSlot)
           : prev.defaultMaxOrdersPerSlot,
+        nextDayCutoffAfterHm: typeof rules.nextDayCutoffAfterHm === "string" ? rules.nextDayCutoffAfterHm : "",
+        nextDayMinSlotStart: typeof rules.nextDayMinSlotStart === "string" ? rules.nextDayMinSlotStart : "",
+        nextDayCutoffAlwaysApply: rules.nextDayCutoffAlwaysApply === true,
       }));
     }
   }, [rules]);
@@ -94,6 +102,7 @@ export default function AdminSchedulingPage() {
     }
   }, [settings]);
 
+  const [savingRules, setSavingRules] = useState(false);
   const [savingTier, setSavingTier] = useState(false);
   const [testAddressStr, setTestAddressStr] = useState("");
   const [testResult, setTestResult] = useState<{
@@ -348,6 +357,51 @@ export default function AdminSchedulingPage() {
                 />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-2">
+                <Label htmlFor="nextDayCutoffAfterHm">Next-day cutoff after (HH:mm)</Label>
+                <Input
+                  id="nextDayCutoffAfterHm"
+                  placeholder="16:00"
+                  value={rulesForm.nextDayCutoffAfterHm}
+                  onChange={(event) =>
+                    setRulesForm((prev) => ({ ...prev, nextDayCutoffAfterHm: event.target.value }))
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  After this time today, tomorrow&apos;s morning slots are hidden.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="nextDayMinSlotStart">Next-day earliest slot (HH:mm)</Label>
+                <Input
+                  id="nextDayMinSlotStart"
+                  placeholder="15:00"
+                  value={rulesForm.nextDayMinSlotStart}
+                  onChange={(event) =>
+                    setRulesForm((prev) => ({ ...prev, nextDayMinSlotStart: event.target.value }))
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  When cutoff applies, earliest slot for tomorrow (e.g. 3pm).
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="nextDayCutoffAlwaysApply">Always hide tomorrow&apos;s morning slots</Label>
+                <p className="text-xs text-muted-foreground">
+                  When on, morning slots are always hidden for tomorrow (ignore current time). Use for testing or when you never offer morning slots the next day.
+                </p>
+              </div>
+              <Switch
+                id="nextDayCutoffAlwaysApply"
+                checked={rulesForm.nextDayCutoffAlwaysApply}
+                onCheckedChange={(checked) =>
+                  setRulesForm((prev) => ({ ...prev, nextDayCutoffAlwaysApply: checked }))
+                }
+              />
+            </div>
             <div className="space-y-2">
               <Label htmlFor="slotTimes">Static slot times (one per line, HH:mm, EST)</Label>
               <textarea
@@ -412,7 +466,9 @@ export default function AdminSchedulingPage() {
               </div>
             </div>
             <Button
+              disabled={savingRules}
               onClick={async () => {
+                setSavingRules(true);
                 try {
                   const slotTimesParsed = rulesForm.slotTimes
                     .split("\n")
@@ -460,14 +516,28 @@ export default function AdminSchedulingPage() {
                     },
                     holdMinutes: Number(rulesForm.holdMinutes),
                     effectiveFrom: new Date().toISOString().slice(0, 10),
+                    nextDayCutoffAfterHm:
+                      /^\d{1,2}:\d{2}$/.test(rulesForm.nextDayCutoffAfterHm.trim())
+                        ? rulesForm.nextDayCutoffAfterHm.trim()
+                        : undefined,
+                    nextDayMinSlotStart:
+                      /^\d{1,2}:\d{2}$/.test(rulesForm.nextDayMinSlotStart.trim())
+                        ? rulesForm.nextDayMinSlotStart.trim()
+                        : undefined,
+                    nextDayCutoffAlwaysApply: rulesForm.nextDayCutoffAlwaysApply || undefined,
                   });
                   setMessage("Scheduling rules saved and enabled.");
+                  toast.success("Scheduling rules saved and enabled.");
                 } catch (error) {
-                  setMessage(error instanceof Error ? error.message : "Rules save failed");
+                  const msg = error instanceof Error ? error.message : "Rules save failed";
+                  setMessage(msg);
+                  toast.error(msg);
+                } finally {
+                  setSavingRules(false);
                 }
               }}
             >
-              Save scheduling rules
+              {savingRules ? "Saving…" : "Save scheduling rules"}
             </Button>
           </CardContent>
         </Card>

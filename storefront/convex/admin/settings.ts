@@ -165,7 +165,9 @@ export const sendTestEmail = mutation({
       v.literal("ownerNotification"),
       v.literal("statusUpdate"),
       v.literal("paymentFailed"),
-      v.literal("abandonedCart")
+      v.literal("abandonedCart"),
+      v.literal("ownerOrderComplete"),
+      v.literal("ownerOrderReminder")
     ),
     toEmail: v.string(),
   },
@@ -199,6 +201,41 @@ export const sendTestSms = mutation({
       template: "test_sms",
     });
     return { ok: true, message: `Test SMS scheduled to ${args.toPhone}. Check SMS logs for delivery.` };
+  },
+});
+
+export const resetEmailTemplate = mutation({
+  args: {
+    templateType: v.union(
+      v.literal("orderConfirmation"),
+      v.literal("ownerNotification"),
+      v.literal("statusUpdate"),
+      v.literal("paymentFailed"),
+      v.literal("abandonedCart"),
+      v.literal("ownerOrderComplete"),
+      v.literal("ownerOrderReminder")
+    ),
+  },
+  handler: async (ctx, args) => {
+    await requireRole(ctx, "admin");
+    const type = args.templateType as EmailTemplateType;
+    const entries = [
+      { key: templateSubjectKey(type), value: DEFAULT_SUBJECTS[type] },
+      { key: templateBodyKey(type), value: DEFAULT_BODIES[type] },
+    ];
+    const now = Date.now();
+    for (const { key, value } of entries) {
+      const existing = await ctx.db
+        .query("siteSettings")
+        .withIndex("by_key", (q) => q.eq("key", key))
+        .unique();
+      if (existing) {
+        await ctx.db.patch(existing._id, { value, updatedAt: now });
+      } else {
+        await ctx.db.insert("siteSettings", { key, value, updatedAt: now });
+      }
+    }
+    return { ok: true };
   },
 });
 

@@ -5,7 +5,12 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 
 import { requireRole } from "../lib/auth";
-import { renderStatusUpdate } from "../lib/emailTemplates";
+import {
+  renderOrderConfirmation,
+  renderOwnerNotification,
+  renderOwnerOrderComplete,
+  renderStatusUpdate,
+} from "../lib/emailTemplates";
 
 function startOfDayMs(date: Date): number {
   const d = new Date(date);
@@ -509,7 +514,7 @@ export const updateStatus = mutation({
       const settingsRows = await ctx.db.query("siteSettings").collect();
       const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
       const storeName = settings.storeName ?? "TheTipsyCake";
-      const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
+      const siteUrl = settings.siteUrl ?? "https://order.thetipsycake.com";
       const smsEnabled = settings.smsEnabled !== "false";
       const rendered = await renderStatusUpdate(ctx, {
         storeName,
@@ -536,7 +541,16 @@ export const updateStatus = mutation({
       const storeEmail = settings.storeEmail?.trim();
       const notifyOwner = settings.notifyOwnerOnOrder !== "false";
       const smsEnabled = settings.smsEnabled !== "false";
+      const siteUrl = settings.siteUrl ?? "https://order.thetipsycake.com";
       if (storeEmail && notifyOwner) {
+        const rendered = await renderOwnerOrderComplete(ctx, {
+          siteUrl,
+          orderNumber: order.orderNumber,
+          status: args.status,
+          orderId: order._id,
+          carrier: order.carrier,
+          trackingNumber: order.trackingNumber,
+        });
         await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderComplete, {
           email: storeEmail,
           phone: smsEnabled ? settings.storePhone?.trim() || undefined : undefined,
@@ -545,11 +559,142 @@ export const updateStatus = mutation({
           status: args.status,
           carrier: order.carrier,
           trackingNumber: order.trackingNumber,
+          subjectOverride: rendered.subject,
+          htmlOverride: rendered.html,
         });
       }
     }
 
     return args.orderId;
+  },
+});
+
+/** Resend the order confirmation email to the customer. Admin-only. */
+export const resendOrderConfirmation = mutation({
+  args: { orderId: v.id("orders") },
+  handler: async (ctx, args) => {
+    await requireRole(ctx, "admin", "manager");
+    const order = await ctx.db.get(args.orderId);
+    if (!order) throw new Error("Order not found");
+
+    let customerEmail = order.contactEmail?.trim();
+    if (!customerEmail && order.userId) {
+      const user = await ctx.db.get(order.userId);
+      customerEmail = user?.email?.trim();
+    }
+    if (!customerEmail) throw new Error("No customer email for this order");
+
+    const settingsRows = await ctx.db.query("siteSettings").collect();
+    const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+    const storeName = settings.storeName ?? "TheTipsyCake";
+    const siteUrl = settings.siteUrl ?? "https://order.thetipsycake.com";
+    const storeAddress = settings.storeAddress?.trim() ?? null;
+
+    let deliveryAddress: string | null = null;
+    if (
+      (order.fulfillmentMode === "delivery" || order.fulfillmentMode === "shipping") &&
+      order.addressId
+    ) {
+      const addr = await ctx.db.get(order.addressId);
+      deliveryAddress = addr?.formatted ?? null;
+    }
+
+    const orderItems = await ctx.db
+      .query("orderItems")
+      .withIndex("by_order", (q) => q.eq("orderId", args.orderId))
+      .collect();
+
+    const rendered = await renderOrderConfirmation(ctx, {
+      storeName,
+      siteUrl,
+      orderNumber: order.orderNumber,
+      fulfillmentMode: order.fulfillmentMode,
+      totalCents: order.pricingSnapshot.totalCents,
+      scheduledSlotKey: order.scheduledSlotKey,
+      guestToken: order.guestToken,
+      storeAddress,
+      deliveryAddress,
+      pricingSnapshot: order.pricingSnapshot,
+      items: orderItems,
+    });
+
+    await ctx.scheduler.runAfter(0, internal.notifications.sendOrderConfirmation, {
+      email: customerEmail,
+      orderNumber: order.orderNumber,
+      orderId: order._id,
+      fulfillmentMode: order.fulfillmentMode,
+      totalCents: order.pricingSnapshot.totalCents,
+      scheduledSlotKey: order.scheduledSlotKey,
+      guestToken: order.guestToken,
+      subjectOverride: rendered.subject,
+      htmlOverride: rendered.html,
+    });
+    return { ok: true };
+  },
+});
+
+/** Resend the new-order notification to the store owner only (not the customer). Admin-only. */
+export const resendOwnerNotification = mutation({
+  args: { orderId: v.id("orders") },
+  handler: async (ctx, args) => {
+    await requireRole(ctx, "admin", "manager");
+    const order = await ctx.db.get(args.orderId);
+    if (!order) throw new Error("Order not found");
+
+    const settingsRows = await ctx.db.query("siteSettings").collect();
+    const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
+    const storeName = settings.storeName ?? "TheTipsyCake";
+    const siteUrl = settings.siteUrl ?? "https://order.thetipsycake.com";
+    const storeEmail = settings.storeEmail?.trim();
+    const storeAddress = settings.storeAddress?.trim() ?? null;
+
+    if (!storeEmail) throw new Error("Store email not configured");
+
+    let deliveryAddress: string | null = null;
+    if (
+      (order.fulfillmentMode === "delivery" || order.fulfillmentMode === "shipping") &&
+      order.addressId
+    ) {
+      const addr = await ctx.db.get(order.addressId);
+      deliveryAddress = addr?.formatted ?? null;
+    }
+
+    const orderItems = await ctx.db
+      .query("orderItems")
+      .withIndex("by_order", (q) => q.eq("orderId", args.orderId))
+      .collect();
+
+    const rendered = await renderOwnerNotification(ctx, {
+      storeName,
+      siteUrl,
+      orderNumber: order.orderNumber,
+      fulfillmentMode: order.fulfillmentMode,
+      totalCents: order.pricingSnapshot.totalCents,
+      scheduledSlotKey: order.scheduledSlotKey,
+      storeAddress,
+      deliveryAddress,
+      contactEmail: order.contactEmail,
+      contactPhone: order.contactPhone,
+      contactName: order.contactName,
+      items: orderItems,
+      pricingSnapshot: order.pricingSnapshot,
+      appliedCouponCode: order.appliedCouponCode,
+      loyaltyPointsRedeemed: order.loyaltyPointsRedeemed,
+    });
+
+    await ctx.scheduler.runAfter(0, internal.notifications.sendOrderConfirmationToOwner, {
+      email: storeEmail,
+      orderNumber: order.orderNumber,
+      orderId: order._id,
+      fulfillmentMode: order.fulfillmentMode,
+      totalCents: order.pricingSnapshot.totalCents,
+      scheduledSlotKey: order.scheduledSlotKey,
+      contactEmail: order.contactEmail,
+      contactPhone: order.contactPhone,
+      subjectOverride: rendered.subject,
+      htmlOverride: rendered.html,
+    });
+    return { ok: true };
   },
 });
 
@@ -627,7 +772,7 @@ export const assignDriver = mutation({
       const settingsRows = await ctx.db.query("siteSettings").collect();
       const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
       const storeName = settings.storeName ?? "TheTipsyCake";
-      const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
+      const siteUrl = settings.siteUrl ?? "https://order.thetipsycake.com";
       const smsEnabled = settings.smsEnabled !== "false";
       const rendered = await renderStatusUpdate(ctx, {
         storeName,
@@ -674,7 +819,16 @@ export const setTracking = mutation({
     const storeEmail = settings.storeEmail?.trim();
     const notifyOwner = settings.notifyOwnerOnOrder !== "false";
     const smsEnabled = settings.smsEnabled !== "false";
+    const siteUrl = settings.siteUrl ?? "https://order.thetipsycake.com";
     if (storeEmail && notifyOwner) {
+      const rendered = await renderOwnerOrderComplete(ctx, {
+        siteUrl,
+        orderNumber: order.orderNumber,
+        status: "shipped",
+        orderId: order._id,
+        carrier: args.carrier,
+        trackingNumber: args.trackingNumber,
+      });
       await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderComplete, {
         email: storeEmail,
         phone: smsEnabled ? settings.storePhone?.trim() || undefined : undefined,
@@ -683,12 +837,14 @@ export const setTracking = mutation({
         status: "shipped",
         carrier: args.carrier,
         trackingNumber: args.trackingNumber,
+        subjectOverride: rendered.subject,
+        htmlOverride: rendered.html,
       });
     }
 
     if (order.contactEmail || order.contactPhone) {
       const storeName = settings.storeName ?? "TheTipsyCake";
-      const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
+      const siteUrl = settings.siteUrl ?? "https://order.thetipsycake.com";
       const rendered = await renderStatusUpdate(ctx, {
         storeName,
         orderNumber: order.orderNumber,

@@ -1363,6 +1363,21 @@ function CheckoutContent() {
                 )}
               </div>
             )}
+            {selectedDate && slots && needsSchedulingForMode && slots.nextDayCutoffActive === true && (
+              <div className="mt-3 rounded-lg border bg-amber-50/50 px-3 py-2 text-xs dark:bg-amber-950/20">
+                <p className="tabular-nums text-amber-700 dark:text-amber-300">
+                  Orders placed late in the day — afternoon slots only for tomorrow.
+                </p>
+              </div>
+            )}
+            {selectedDate && slots && needsSchedulingForMode && slots.nextDayDebug && !slots.nextDayCutoffActive && (
+              <div className="mt-3 rounded-lg border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                <p>
+                  Morning slots for tomorrow will be hidden after {slots.nextDayDebug.cutoffAfter ?? "—"} (store time).
+                  {slots.nextDayDebug.storeTime && ` Current: ${slots.nextDayDebug.storeTime}.`}
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </section>

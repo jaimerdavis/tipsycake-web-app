@@ -52,7 +52,7 @@ const BLAST_TEMPLATES = [
     body: `<h2>Hey there!</h2>
 <p>We've got something sweet for you.</p>
 <p>Use code <strong>${COUPON_PLACEHOLDER}</strong> for 10% off your next order.</p>
-<p><a href="https://order.tipsycake.com/products">Order now</a></p>
+<p><a href="https://order.thetipsycake.com/products">Order now</a></p>
 <p>— TheTipsyCake</p>`,
   },
   {
@@ -77,7 +77,7 @@ const BLAST_TEMPLATES = [
     body: `<h2>On us!</h2>
 <p>Get free delivery on your next bundt order.</p>
 <p>Use code <strong>${COUPON_PLACEHOLDER}</strong> at checkout.</p>
-<p><a href="https://order.tipsycake.com/products">Place your order</a></p>
+<p><a href="https://order.thetipsycake.com/products">Place your order</a></p>
 <p>— TheTipsyCake</p>`,
   },
   {
@@ -89,7 +89,7 @@ const BLAST_TEMPLATES = [
 <p>Enjoy <strong>$5 off your next cake order</strong> — use code <strong>${COUPON_PLACEHOLDER}</strong> at checkout — as a thank-you for being part of The Tipsy Cake family.</p>
 <p>We've got some delicious flavors waiting for you, and we'd love to have you back.</p>
 <p>
-  <a href="https://order.tipsycake.com/products">Shop our cakes now</a>
+  <a href="https://order.thetipsycake.com/products">Shop our cakes now</a>
 </p>
 <p><em>Your $5 off expires in 24 hours, so don't wait too long.</em></p>
 <p>— The Tipsy Cake</p>`,
@@ -100,7 +100,7 @@ const BLAST_TEMPLATES = [
     subject: "We miss you! Here's a little something",
     body: `<h2>It's been a while!</h2>
 <p>We haven't seen you in a bit and wanted to say hi. Our bundt cakes are as delicious as ever.</p>
-<p>Treat yourself — <a href="https://order.tipsycake.com/products">order a bundt today</a>.</p>
+<p>Treat yourself — <a href="https://order.thetipsycake.com/products">order a bundt today</a>.</p>
 <p>— TheTipsyCake</p>`,
   },
   {
@@ -576,7 +576,7 @@ export default function EmailBlastPage() {
               placeholder={`<h2>Hey there!</h2>
 <p>We've got something sweet for you.</p>
 <p>Use code <strong>${COUPON_PLACEHOLDER}</strong> for 10% off.</p>
-<a href="https://order.tipsycake.com/products">Order now</a>`}
+<a href="https://order.thetipsycake.com/products">Order now</a>`}
               rows={12}
               className="font-mono text-sm"
             />

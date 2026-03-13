@@ -235,6 +235,12 @@ export default defineSchema({
     slotTimes: v.optional(v.array(v.string())),
     /** Default max orders per slot when not in slotCapacities. */
     defaultMaxOrdersPerSlot: v.optional(v.number()),
+    /** If current time >= this (HH:mm), next-day earliest slot is nextDayMinSlotStart. E.g. "16:00" = after 4pm. */
+    nextDayCutoffAfterHm: v.optional(v.string()),
+    /** When nextDayCutoffAfterHm applies, earliest slot for tomorrow. E.g. "15:00" = 3pm. */
+    nextDayMinSlotStart: v.optional(v.string()),
+    /** When true, always hide tomorrow's morning slots (ignore current time). Useful for testing. */
+    nextDayCutoffAlwaysApply: v.optional(v.boolean()),
   })
     .index("by_enabled", ["enabled"])
     .index("by_effectiveFrom", ["effectiveFrom"]),
@@ -385,6 +391,7 @@ export default defineSchema({
     modifiersSnapshot: v.array(modifierSnapshotValidator),
     qty: v.number(),
     unitPriceCents: v.number(),
+    itemNote: v.optional(v.string()),
     createdAt: v.number(),
   }).index("by_order", ["orderId"]),
 

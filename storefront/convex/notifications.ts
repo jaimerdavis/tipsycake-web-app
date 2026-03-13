@@ -314,22 +314,34 @@ export const sendOwnerOrderComplete = internalAction({
     status: v.string(),
     carrier: v.optional(v.string()),
     trackingNumber: v.optional(v.string()),
+    subjectOverride: v.optional(v.string()),
+    htmlOverride: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const orderContext = { orderId: args.orderId, orderNumber: args.orderNumber };
     const statusLabels: Record<string, string> = {
       completed: "Order Complete (Picked Up)",
       delivered: "Cake Delivered",
       shipped: "Cake Shipped",
     };
     const label = statusLabels[args.status] ?? args.status;
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://order.thetipsycake.com";
 
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://order.tipsycake.com";
-    const trackingRow =
-      args.carrier && args.trackingNumber
-        ? `<tr><td style="padding: 8px 0; font-weight: bold;">Tracking</td><td>${args.carrier}: ${args.trackingNumber}</td></tr>`
-        : "";
+    if (args.subjectOverride && args.htmlOverride) {
+      await sendEmailAndLog(ctx, {
+        to: args.email,
+        subject: args.subjectOverride,
+        html: args.htmlOverride,
+        template: "ownerOrderComplete",
+        ...orderContext,
+      });
+    } else {
+      const trackingRow =
+        args.carrier && args.trackingNumber
+          ? `<tr><td style="padding: 8px 0; font-weight: bold;">Tracking</td><td>${args.carrier}: ${args.trackingNumber}</td></tr>`
+          : "";
 
-    const html = `
+      const html = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>Order Complete</h2>
         <p>Order <strong>${args.orderNumber}</strong> has reached status: <strong>${label}</strong>.</p>
@@ -342,14 +354,14 @@ export const sendOwnerOrderComplete = internalAction({
       </div>
     `.trim();
 
-    await sendEmailAndLog(ctx, {
-      to: args.email,
-      subject: `Order ${args.orderNumber} — ${label}`,
-      html,
-      template: "ownerOrderComplete",
-      orderId: args.orderId,
-      orderNumber: args.orderNumber,
-    });
+      await sendEmailAndLog(ctx, {
+        to: args.email,
+        subject: `Order ${args.orderNumber} — ${label}`,
+        html,
+        template: "ownerOrderComplete",
+        ...orderContext,
+      });
+    }
 
     if (args.phone) {
       await ctx.scheduler.runAfter(0, internal.notifications.sendSms, {
@@ -372,12 +384,25 @@ export const sendOwnerOrderReminder = internalAction({
     orderId: v.optional(v.id("orders")),
     status: v.string(),
     hoursStale: v.number(),
+    subjectOverride: v.optional(v.string()),
+    htmlOverride: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://order.tipsycake.com";
-    const statusLabel = args.status.replace(/_/g, " ");
+    const orderContext = { orderId: args.orderId, orderNumber: args.orderNumber };
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://order.thetipsycake.com";
 
-    const html = `
+    if (args.subjectOverride && args.htmlOverride) {
+      await sendEmailAndLog(ctx, {
+        to: args.email,
+        subject: args.subjectOverride,
+        html: args.htmlOverride,
+        template: "ownerOrderReminder",
+        ...orderContext,
+      });
+    } else {
+      const statusLabel = args.status.replace(/_/g, " ");
+
+      const html = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>Order Reminder</h2>
         <p>Order <strong>${args.orderNumber}</strong> has had no status update for ${args.hoursStale} hour(s).</p>
@@ -386,14 +411,14 @@ export const sendOwnerOrderReminder = internalAction({
       </div>
     `.trim();
 
-    await sendEmailAndLog(ctx, {
-      to: args.email,
-      subject: `Reminder: Order ${args.orderNumber} — no update in ${args.hoursStale}hr`,
-      html,
-      template: "ownerOrderReminder",
-      orderId: args.orderId,
-      orderNumber: args.orderNumber,
-    });
+      await sendEmailAndLog(ctx, {
+        to: args.email,
+        subject: `Reminder: Order ${args.orderNumber} — no update in ${args.hoursStale}hr`,
+        html,
+        template: "ownerOrderReminder",
+        ...orderContext,
+      });
+    }
 
     if (args.phone) {
       await ctx.scheduler.runAfter(0, internal.notifications.sendSms, {

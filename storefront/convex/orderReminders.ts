@@ -1,5 +1,6 @@
 import { internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { renderOwnerOrderReminder } from "./lib/emailTemplates";
 
 const REMINDER_STATUSES = [
   "paid_confirmed",
@@ -26,6 +27,7 @@ export const scanAndSendReminders = internalMutation({
 
     if (!storeEmail || notifyOwner === false || reminderEnabled === false) return { reminded: 0 };
 
+    const siteUrl = settings.siteUrl ?? "https://order.thetipsycake.com";
     const firstMs = firstHours * 60 * 60 * 1000;
     const secondMs = secondHours * 60 * 60 * 1000;
     const cutoffMs = firstMs;
@@ -45,6 +47,12 @@ export const scanAndSendReminders = internalMutation({
         const lastLevel = order.lastReminderLevel ?? 0;
 
         if (elapsed >= secondMs && lastLevel === 1) {
+          const rendered = await renderOwnerOrderReminder(ctx, {
+            siteUrl,
+            orderNumber: order.orderNumber,
+            status: order.status,
+            hoursStale: Math.round(secondHours),
+          });
           await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderReminder, {
             email: storeEmail,
             phone: smsEnabled ? settings.storePhone?.trim() || undefined : undefined,
@@ -52,10 +60,18 @@ export const scanAndSendReminders = internalMutation({
             orderId: order._id,
             status: order.status,
             hoursStale: Math.round(secondHours),
+            subjectOverride: rendered.subject,
+            htmlOverride: rendered.html,
           });
           await ctx.db.patch(order._id, { lastReminderLevel: 2 });
           reminded += 1;
         } else if (elapsed >= firstMs && lastLevel < 1) {
+          const rendered = await renderOwnerOrderReminder(ctx, {
+            siteUrl,
+            orderNumber: order.orderNumber,
+            status: order.status,
+            hoursStale: Math.round(firstHours),
+          });
           await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderReminder, {
             email: storeEmail,
             phone: smsEnabled ? settings.storePhone?.trim() || undefined : undefined,
@@ -63,6 +79,8 @@ export const scanAndSendReminders = internalMutation({
             orderId: order._id,
             status: order.status,
             hoursStale: Math.round(firstHours),
+            subjectOverride: rendered.subject,
+            htmlOverride: rendered.html,
           });
           await ctx.db.patch(order._id, { lastReminderLevel: 1 });
           reminded += 1;

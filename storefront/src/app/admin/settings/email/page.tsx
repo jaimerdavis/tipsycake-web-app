@@ -69,12 +69,14 @@ export default function EmailSettingsPage() {
   });
   const setBatch = useMutation(api.admin.settings.setBatch);
   const sendTestEmail = useMutation(api.admin.settings.sendTestEmail);
+  const resetEmailTemplate = useMutation(api.admin.settings.resetEmailTemplate);
 
   const [form, setForm] = useState<Record<string, string>>({});
   const [synced, setSynced] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [testEmailSending, setTestEmailSending] = useState<string | null>(null);
+  const [resetting, setResetting] = useState<string | null>(null);
   const [logTemplateFilter, setLogTemplateFilter] = useState<string>("all");
   const templateSyncedRef = useRef(false);
 
@@ -323,7 +325,7 @@ export default function EmailSettingsPage() {
         <CardHeader>
           <CardTitle>Email Templates</CardTitle>
           <CardDescription>
-            Customize subjects and HTML bodies. Placeholders: {`{{orderNumber}}`}, {`{{storeName}}`}, {`{{productDetails}}`}, {`{{couponBlock}}`}, {`{{deliveryAddress}}`}, etc.
+            Customize subjects and HTML bodies. Each template has its own placeholders — expand a template to see available placeholders like {`{{orderDetails}}`}, {`{{orderSummary}}`}, {`{{addressSection}}`}, {`{{contactInfo}}`}, {`{{pricingBreakdown}}`}.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -337,7 +339,13 @@ export default function EmailSettingsPage() {
                     ? "Status update"
                     : t.type === "paymentFailed"
                       ? "Payment failed"
-                      : "Abandoned cart";
+                      : t.type === "abandonedCart"
+                        ? "Abandoned cart"
+                        : t.type === "ownerOrderComplete"
+                          ? "Owner order complete"
+                          : t.type === "ownerOrderReminder"
+                            ? "Owner order reminder"
+                            : t.type;
             const sending = testEmailSending === t.type;
             return (
               <Collapsible key={t.type} defaultOpen={false}>
@@ -404,9 +412,30 @@ export default function EmailSettingsPage() {
                           rows={6}
                         />
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        Placeholders: {t.placeholders.join(", ")}
-                      </p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-muted-foreground">
+                          Placeholders: {t.placeholders.join(", ")}
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={resetting === t.type}
+                          onClick={async () => {
+                            setResetting(t.type);
+                            try {
+                              await resetEmailTemplate({ templateType: t.type });
+                              templateSyncedRef.current = false;
+                              setMessage(`"${typeLabel}" reset to default.`);
+                            } catch (err) {
+                              setMessage(err instanceof Error ? err.message : "Reset failed");
+                            } finally {
+                              setResetting(null);
+                            }
+                          }}
+                        >
+                          {resetting === t.type ? "Resetting…" : "Reset to default"}
+                        </Button>
+                      </div>
                     </div>
                   </CollapsibleContent>
                 </div>

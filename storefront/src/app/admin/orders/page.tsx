@@ -36,6 +36,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 
 /** Statuses that trigger customer email/SMS notification */
 const NOTIFY_STATUSES = new Set([
@@ -147,8 +148,12 @@ export default function AdminOrdersPage() {
   const markReadyForDelivery = useMutation(api.admin.orders.markReadyForDelivery);
   const assignDriver = useMutation(api.admin.orders.assignDriver);
   const setTracking = useMutation(api.admin.orders.setTracking);
+  const resendOrderConfirmation = useMutation(api.admin.orders.resendOrderConfirmation);
+  const resendOwnerNotification = useMutation(api.admin.orders.resendOwnerNotification);
 
   const [noteByOrder, setNoteByOrder] = useState<Record<string, string>>({});
+  const [resendingOrderId, setResendingOrderId] = useState<Id<"orders"> | null>(null);
+  const [resendingOwnerId, setResendingOwnerId] = useState<Id<"orders"> | null>(null);
   const [notifiedOrderId, setNotifiedOrderId] = useState<string | null>(null);
   const [cancelConfirmOrder, setCancelConfirmOrder] = useState<{
     _id: Id<"orders">;
@@ -159,16 +164,16 @@ export default function AdminOrdersPage() {
   >({});
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-3 py-4 sm:px-6 sm:py-6">
-      <header className="min-w-0 space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Admin Orders</h1>
+    <main className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-4 sm:gap-6 sm:px-6 sm:py-6">
+      <header className="min-w-0 space-y-1">
+        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Admin Orders</h1>
         <p className="text-sm text-muted-foreground">
           Update status, assign drivers, and set shipping tracking.
         </p>
       </header>
 
-      <div className="space-y-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+      <div className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
           <Label htmlFor="search" className="sr-only">
             Search orders
           </Label>
@@ -178,85 +183,86 @@ export default function AdminOrdersPage() {
             placeholder="Order #, email, or customer name…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="max-w-xs"
+            className="min-w-0 w-full sm:max-w-xs"
           />
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex shrink-0 items-center gap-2">
-              <Label htmlFor="product-filter" className="whitespace-nowrap text-sm text-muted-foreground">
-                Cake
-              </Label>
-              <Select value={productFilter} onValueChange={setProductFilter}>
-                <SelectTrigger id="product-filter" className="w-[140px]">
-                  <SelectValue placeholder="All cakes" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All cakes</SelectItem>
-                  {(products ?? []).map((p) => (
-                    <SelectItem key={p._id} value={p._id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Label htmlFor="date-from" className="whitespace-nowrap text-sm text-muted-foreground">
-                From
-              </Label>
-              <Input
-                id="date-from"
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                className="w-[130px]"
-              />
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Label htmlFor="date-to" className="whitespace-nowrap text-sm text-muted-foreground">
-                To
-              </Label>
-              <Input
-                id="date-to"
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                className="w-[130px]"
-              />
-            </div>
-            {(search || productFilter !== "all" || dateFrom || dateTo) && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setSearch("");
-                  setProductFilter("all");
-                  setDateFrom("");
-                  setDateTo("");
-                }}
-              >
-                Clear filters
-              </Button>
-            )}
+          {(search || productFilter !== "all" || dateFrom || dateTo) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-10 touch-manipulation"
+              onClick={() => {
+                setSearch("");
+                setProductFilter("all");
+                setDateFrom("");
+                setDateTo("");
+              }}
+            >
+              Clear filters
+            </Button>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
+          <div className="col-span-2 flex min-w-0 items-center gap-2 sm:col-span-1 sm:w-auto">
+            <Label htmlFor="product-filter" className="shrink-0 text-sm text-muted-foreground sm:whitespace-nowrap">
+              Cake
+            </Label>
+            <Select value={productFilter} onValueChange={setProductFilter}>
+              <SelectTrigger id="product-filter" className="min-w-0 flex-1 touch-manipulation sm:w-[140px]">
+                <SelectValue placeholder="All cakes" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All cakes</SelectItem>
+                {(products ?? []).map((p) => (
+                  <SelectItem key={p._id} value={p._id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex min-w-0 items-center gap-2">
+            <Label htmlFor="date-from" className="shrink-0 text-sm text-muted-foreground">
+              From
+            </Label>
+            <Input
+              id="date-from"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="min-w-0 flex-1 touch-manipulation sm:w-[130px]"
+            />
+          </div>
+          <div className="flex min-w-0 items-center gap-2">
+            <Label htmlFor="date-to" className="shrink-0 text-sm text-muted-foreground">
+              To
+            </Label>
+            <Input
+              id="date-to"
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="min-w-0 flex-1 touch-manipulation sm:w-[130px]"
+            />
           </div>
         </div>
       </div>
 
       {emailFilter && (
-        <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 text-sm">
-          <span className="text-muted-foreground">Filtering by customer:</span>
-          <span className="font-medium">{emailFilter}</span>
-          <Button variant="ghost" size="sm" asChild>
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 text-sm">
+          <span className="text-muted-foreground">Filtering by:</span>
+          <span className="truncate font-medium">{emailFilter}</span>
+          <Button variant="ghost" size="sm" className="h-9 touch-manipulation shrink-0" asChild>
             <Link href="/admin/orders">Clear</Link>
           </Button>
         </div>
       )}
-      <div className="flex min-w-0 flex-wrap items-center gap-3 sm:gap-4">
-        <div className="flex min-w-0 shrink items-center gap-2">
-          <Label htmlFor="fulfillment-filter" className="shrink-0 whitespace-nowrap text-sm">
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <Label htmlFor="fulfillment-filter" className="shrink-0 text-sm sm:whitespace-nowrap">
             Fulfillment
           </Label>
           <Select value={fulfillmentFilter} onValueChange={setFulfillmentFilter}>
-            <SelectTrigger id="fulfillment-filter" className="min-w-0 w-[130px] sm:w-[160px]">
+            <SelectTrigger id="fulfillment-filter" className="min-w-0 flex-1 touch-manipulation sm:w-[160px]">
               <SelectValue placeholder="All" />
             </SelectTrigger>
             <SelectContent>
@@ -268,12 +274,12 @@ export default function AdminOrdersPage() {
             </SelectContent>
           </Select>
         </div>
-        <div className="flex min-w-0 shrink items-center gap-2">
-          <Label htmlFor="status-filter" className="shrink-0 whitespace-nowrap text-sm">
+        <div className="flex min-w-0 items-center gap-2">
+          <Label htmlFor="status-filter" className="shrink-0 text-sm sm:whitespace-nowrap">
             Status
           </Label>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger id="status-filter" className="min-w-0 w-[140px] sm:w-[180px]">
+            <SelectTrigger id="status-filter" className="min-w-0 flex-1 touch-manipulation sm:w-[180px]">
               <SelectValue placeholder="All" />
             </SelectTrigger>
             <SelectContent>
@@ -294,38 +300,40 @@ export default function AdminOrdersPage() {
               <CollapsibleTrigger asChild>
                 <button
                   type="button"
-                  className="w-full text-left hover:bg-muted/50 transition-colors"
+                  className="w-full min-h-[52px] touch-manipulation text-left px-4 py-3 hover:bg-muted/50 active:bg-muted/70 transition-colors rounded-t-lg sm:rounded-t-none"
                   aria-label={`Expand order #${order.orderNumber}`}
                 >
-                  <CardHeader className="pb-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <ChevronRight className="h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]/collapse:rotate-90" />
-                        <CardTitle className="font-mono text-lg">#{order.orderNumber}</CardTitle>
-                        <Badge variant="outline" className="capitalize font-normal text-xs">
-                          {order.fulfillmentMode}
-                        </Badge>
-                        <Badge variant={order.status === "paid_confirmed" ? "default" : "secondary"} className="text-xs">
-                          {CUSTOMER_STATUS_LABELS[order.status] ?? order.status.replace(/_/g, " ")}
-                        </Badge>
-                        <span className="text-sm text-muted-foreground truncate">
-                          {(order.contactName as string | undefined) ??
-                            (order.userId ? order.userName ?? "Account" : order.contactEmail ?? "Guest")}
-                        </span>
-                        <span className="text-sm font-medium">
-                          ${(order.pricingSnapshot.totalCents / 100).toFixed(2)}
-                        </span>
-                      </div>
-                      <span className="text-sm text-muted-foreground shrink-0">
-                        {new Date(order.createdAt).toLocaleString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                        })}
+                  <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
+                    <div className="flex flex-wrap items-center gap-2 min-w-0">
+                      <ChevronRight className="h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]/collapse:rotate-90" />
+                      <CardTitle className="font-mono text-base sm:text-lg">#{order.orderNumber}</CardTitle>
+                      <Badge variant="outline" className="capitalize font-normal text-xs shrink-0">
+                        {order.fulfillmentMode}
+                      </Badge>
+                      <Badge variant={order.status === "paid_confirmed" ? "default" : "secondary"} className="text-xs shrink-0">
+                        {CUSTOMER_STATUS_LABELS[order.status] ?? order.status.replace(/_/g, " ")}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground truncate hidden sm:inline">
+                        {(order.contactName as string | undefined) ??
+                          (order.userId ? order.userName ?? "Account" : order.contactEmail ?? "Guest")}
+                      </span>
+                      <span className="text-sm font-medium shrink-0">
+                        ${(order.pricingSnapshot.totalCents / 100).toFixed(2)}
                       </span>
                     </div>
-                  </CardHeader>
+                    <span className="text-xs sm:text-sm text-muted-foreground shrink-0 pl-6 sm:pl-0">
+                      {new Date(order.createdAt).toLocaleString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground truncate mt-1 pl-6 sm:hidden">
+                    {(order.contactName as string | undefined) ??
+                      (order.userId ? order.userName ?? "Account" : order.contactEmail ?? "Guest")}
+                  </p>
                 </button>
               </CollapsibleTrigger>
               <CollapsibleContent>
@@ -362,10 +370,21 @@ export default function AdminOrdersPage() {
                       const variant = item.variantSnapshot
                         ? (item.variantSnapshot as { label?: string }).label
                         : null;
-                      const line = variant ? `${name} (${variant})` : name;
+                      const base = variant ? `${name} (${variant})` : name;
+                      const addons = (item.modifiersSnapshot ?? [])
+                        .map((m) => (m as { optionName?: string }).optionName)
+                        .filter(Boolean);
+                      const line = addons.length > 0 ? `${base} + ${addons.join(", ")}` : base;
                       return (
                         <li key={i} className="flex justify-between gap-2">
-                          <span className="truncate">{line} × {item.qty}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="truncate block">{line} × {item.qty}</span>
+                            {item.itemNote && (
+                              <span className="text-xs text-muted-foreground italic block truncate">
+                                Note: {item.itemNote}
+                              </span>
+                            )}
+                          </span>
                           <span className="shrink-0 text-muted-foreground">
                             ${((item.unitPriceCents * item.qty) / 100).toFixed(2)}
                           </span>
@@ -379,8 +398,8 @@ export default function AdminOrdersPage() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                <Button variant="outline" size="sm" asChild>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" size="sm" className="h-10 min-w-[44px] touch-manipulation" asChild>
                   <Link
                     href={`/orders/${order.guestToken}`}
                     target="_blank"
@@ -389,10 +408,50 @@ export default function AdminOrdersPage() {
                     Edit / View order
                   </Link>
                 </Button>
+                {(order.contactEmail || order.userEmail) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-10 min-w-[44px] touch-manipulation"
+                    disabled={resendingOrderId === order._id}
+                    onClick={async () => {
+                      setResendingOrderId(order._id);
+                      try {
+                        await resendOrderConfirmation({ orderId: order._id });
+                        toast.success("Confirmation email resent");
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : "Failed to resend");
+                      } finally {
+                        setResendingOrderId(null);
+                      }
+                    }}
+                  >
+                    {resendingOrderId === order._id ? "Sending…" : "Resend confirmation"}
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  className="h-10 min-w-[44px] touch-manipulation"
+                  disabled={resendingOwnerId === order._id}
+                  onClick={async () => {
+                    setResendingOwnerId(order._id);
+                    try {
+                      await resendOwnerNotification({ orderId: order._id });
+                      toast.success("Owner notification resent");
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Failed to resend");
+                    } finally {
+                      setResendingOwnerId(null);
+                    }
+                  }}
+                >
+                  {resendingOwnerId === order._id ? "Sending…" : "Resend owner notification"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-10 min-w-[44px] touch-manipulation text-destructive hover:bg-destructive/10 hover:text-destructive"
                   onClick={() =>
                     setCancelConfirmOrder({ _id: order._id, orderNumber: order.orderNumber })
                   }
@@ -406,6 +465,7 @@ export default function AdminOrdersPage() {
                     order.status === "in_production" && (
                       <Button
                         size="sm"
+                        className="h-10 min-w-[44px] touch-manipulation"
                         onClick={() => markReadyForDelivery({ orderId: order._id })}
                       >
                         Ready for Delivery
@@ -418,6 +478,7 @@ export default function AdminOrdersPage() {
                     <Button
                       key={action.nextStatus}
                       size="sm"
+                      className="h-10 min-w-[44px] touch-manipulation"
                       onClick={async () => {
                         await updateStatus({
                           orderId: order._id,
@@ -447,7 +508,7 @@ export default function AdminOrdersPage() {
                     </span>
                   )}
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <Label className="sr-only">Note</Label>
                   <Input
                     placeholder="Optional note"
@@ -455,7 +516,7 @@ export default function AdminOrdersPage() {
                     onChange={(e) =>
                       setNoteByOrder((prev) => ({ ...prev, [order._id]: e.target.value }))
                     }
-                    className="h-8 w-40 text-sm"
+                    className="h-10 min-w-0 flex-1 touch-manipulation text-sm sm:w-40"
                   />
                 </div>
               </div>
@@ -470,6 +531,7 @@ export default function AdminOrdersPage() {
                           key={driver._id}
                           size="sm"
                           variant="outline"
+                          className="h-10 min-w-[44px] touch-manipulation"
                           onClick={() => assignDriver({ orderId: order._id, driverId: driver._id })}
                         >
                           Assign {driver.name}
@@ -479,7 +541,7 @@ export default function AdminOrdersPage() {
                 )}
 
               {order.fulfillmentMode === "shipping" && (
-                <div className="grid gap-2 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <Select
                     value={
                       trackingByOrder[order._id]?.carrier ??
@@ -499,7 +561,7 @@ export default function AdminOrdersPage() {
                       }))
                     }
                   >
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger className="h-10 w-full touch-manipulation">
                       <SelectValue placeholder="Carrier" />
                     </SelectTrigger>
                     <SelectContent>
@@ -529,9 +591,11 @@ export default function AdminOrdersPage() {
                       }))
                     }
                     placeholder="Tracking number"
+                    className="h-10 touch-manipulation"
                   />
                   <Button
                     variant="outline"
+                    className="h-10 touch-manipulation"
                     onClick={() => {
                       const t = trackingByOrder[order._id] ?? {
                         carrier: order.carrier ?? "UPS",
@@ -554,7 +618,7 @@ export default function AdminOrdersPage() {
           </Collapsible>
         ))}
         {ordersStatus === "CanLoadMore" && (
-          <Button variant="outline" onClick={() => loadMoreOrders(50)}>
+          <Button variant="outline" className="h-11 w-full touch-manipulation sm:w-auto" onClick={() => loadMoreOrders(50)}>
             Load more orders
           </Button>
         )}

@@ -299,9 +299,25 @@ export const getSlots = query({
       cutoffMinutes !== null &&
       storeNow.minutesSinceMidnight >= cutoffMinutes;
 
+    const tomorrowYmd = addDaysToYmd(storeNow.dateYmd, 1);
+    const isTomorrow = args.date === tomorrowYmd;
+    const nextDayCutoffHm = typeof rules.nextDayCutoffAfterHm === "string" ? rules.nextDayCutoffAfterHm : null;
+    const nextDayMinSlot = typeof rules.nextDayMinSlotStart === "string" ? rules.nextDayMinSlotStart : null;
+    const nextDayCutoffParsed = nextDayCutoffHm ? parseHm(nextDayCutoffHm) : null;
+    const nextDayMinSlotParsed = nextDayMinSlot ? parseHm(nextDayMinSlot) : null;
+    const nextDayCutoffMin = nextDayCutoffParsed ? nextDayCutoffParsed[0] * 60 + nextDayCutoffParsed[1] : null;
+    const nextDayMinSlotMin = nextDayMinSlotParsed ? nextDayMinSlotParsed[0] * 60 + nextDayMinSlotParsed[1] : null;
+    const alwaysApply = rules.nextDayCutoffAlwaysApply === true;
+    const nextDayCutoffActive =
+      isTomorrow &&
+      nextDayCutoffMin !== null &&
+      nextDayMinSlotMin !== null &&
+      (alwaysApply || storeNow.minutesSinceMidnight >= nextDayCutoffMin);
+
     for (const slotStart of slotStarts) {
       const cursorUtc = storeLocalToUtc(args.date, slotStart, tz);
       const [sh, sm] = parseHm(slotStart);
+      const slotMinutes = sh * 60 + sm;
       const endM = sm + durationMinutes;
       const slotEnd = `${pad2(sh + Math.floor(endM / 60))}:${pad2(endM % 60)}`;
       const key = slotKey(args.date, slotStart, args.mode);
@@ -313,6 +329,11 @@ export const getSlots = query({
 
       if (pastCutoff) {
         blocked.push({ slotStart, reason: "CUTOFF" });
+        continue;
+      }
+
+      if (nextDayCutoffActive && slotMinutes < nextDayMinSlotMin) {
+        blocked.push({ slotStart, reason: "NEXT_DAY_CUTOFF" });
         continue;
       }
 
@@ -370,6 +391,20 @@ export const getSlots = query({
         ? cutoffMinutes - storeNow.minutesSinceMidnight
         : null;
 
+    // Debug info when viewing tomorrow and rule is configured (helps diagnose why slots may still show)
+    const nextDayDebug =
+      isTomorrow && (nextDayCutoffHm || nextDayMinSlot)
+        ? {
+            storeTime: storeTimeForDebug,
+            storeMinutes: storeNow.minutesSinceMidnight,
+            cutoffAfter: nextDayCutoffHm ?? null,
+            cutoffMin: nextDayCutoffMin,
+            minSlot: nextDayMinSlot ?? null,
+            minSlotMin: nextDayMinSlotMin,
+            active: nextDayCutoffActive,
+          }
+        : undefined;
+
     return {
       available,
       blocked,
@@ -379,6 +414,8 @@ export const getSlots = query({
       cutoffForDebug,
       minutesUntilCutoff,
       isSameDay,
+      nextDayCutoffActive: nextDayCutoffActive ?? false,
+      nextDayDebug,
     };
   },
 });
@@ -403,10 +440,36 @@ export const createHold = mutation({
       }
     }
 
-    const [, , modeString] = args.slotKey.split("|");
+    const parts = args.slotKey.split("|");
+    const slotDate = parts[0];
+    const slotStartHm = parts[1];
+    const modeString = parts[2];
     const mode = modeString as Mode;
     const rules = await getEnabledRules(ctx);
     if (!rules) throw new Error("No availability rules configured");
+
+    // Enforce next-day cutoff: reject morning slots for tomorrow when ordering late
+    const tz = rules.timezone ?? "America/New_York";
+    const storeNow = nowInStoreTz(new Date(), tz);
+    const tomorrowYmd = addDaysToYmd(storeNow.dateYmd, 1);
+    const nextDayCutoffHm = typeof rules.nextDayCutoffAfterHm === "string" ? rules.nextDayCutoffAfterHm : null;
+    const nextDayMinSlot = typeof rules.nextDayMinSlotStart === "string" ? rules.nextDayMinSlotStart : null;
+    if (
+      slotDate === tomorrowYmd &&
+      nextDayCutoffHm &&
+      nextDayMinSlot &&
+      /^\d{1,2}:\d{2}$/.test(slotStartHm ?? "")
+    ) {
+      const [ch, cm] = parseHm(nextDayCutoffHm);
+      const [mh, mm] = parseHm(nextDayMinSlot);
+      const cutoffMin = ch * 60 + cm;
+      const minSlotMin = mh * 60 + mm;
+      const [sh, sm] = parseHm(slotStartHm!);
+      const slotMin = sh * 60 + sm;
+      if (storeNow.minutesSinceMidnight >= cutoffMin && slotMin < minSlotMin) {
+        throw new Error("SLOT_BLOCKED");
+      }
+    }
 
     const capacity = await ctx.db
       .query("slotCapacities")
@@ -533,6 +596,9 @@ export const adminUpsertAvailabilityRules = mutation({
     effectiveFrom: v.string(),
     slotTimes: v.optional(v.array(v.string())),
     defaultMaxOrdersPerSlot: v.optional(v.number()),
+    nextDayCutoffAfterHm: v.optional(v.string()),
+    nextDayMinSlotStart: v.optional(v.string()),
+    nextDayCutoffAlwaysApply: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     await requireRole(ctx, "admin", "manager");
@@ -546,11 +612,18 @@ export const adminUpsertAvailabilityRules = mutation({
       await ctx.db.patch(rule._id, { enabled: false });
     }
 
-    const { slotTimes, defaultMaxOrdersPerSlot, ...rest } = args;
+    const { slotTimes, defaultMaxOrdersPerSlot, nextDayCutoffAfterHm, nextDayMinSlotStart, nextDayCutoffAlwaysApply, ...rest } = args;
     return await ctx.db.insert("availabilityRules", {
       ...rest,
       ...(slotTimes && slotTimes.length > 0 ? { slotTimes } : {}),
       ...(typeof defaultMaxOrdersPerSlot === "number" ? { defaultMaxOrdersPerSlot } : {}),
+      ...(typeof nextDayCutoffAfterHm === "string" && /^\d{1,2}:\d{2}$/.test(nextDayCutoffAfterHm)
+        ? { nextDayCutoffAfterHm }
+        : {}),
+      ...(typeof nextDayMinSlotStart === "string" && /^\d{1,2}:\d{2}$/.test(nextDayMinSlotStart)
+        ? { nextDayMinSlotStart }
+        : {}),
+      ...(nextDayCutoffAlwaysApply === true ? { nextDayCutoffAlwaysApply: true } : {}),
       enabled: true,
       createdAt: Date.now(),
     });

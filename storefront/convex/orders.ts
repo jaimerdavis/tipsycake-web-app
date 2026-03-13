@@ -297,6 +297,7 @@ async function finalizeFromPaymentEvent(
       modifiersSnapshot: modifierSnapshots,
       qty: item.qty,
       unitPriceCents: item.unitPriceSnapshotCents,
+      itemNote: item.itemNote ?? undefined,
       createdAt: now,
     });
   }
@@ -407,7 +408,7 @@ async function finalizeFromPaymentEvent(
   const settingsRows = await ctx.db.query("siteSettings").collect();
   const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
   const storeName = settings.storeName ?? "TheTipsyCake";
-  const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
+  const siteUrl = settings.siteUrl ?? "https://order.thetipsycake.com";
   const storeEmail = settings.storeEmail?.trim();
   const notifyOwner = settings.notifyOwnerOnOrder !== "false";
 
@@ -423,6 +424,16 @@ async function finalizeFromPaymentEvent(
     customerEmail = user?.email?.trim();
   }
 
+  const storeAddress = settings.storeAddress?.trim() ?? null;
+  let deliveryAddress: string | null = null;
+  if (
+    (finalOrder.fulfillmentMode === "delivery" || finalOrder.fulfillmentMode === "shipping") &&
+    finalOrder.addressId
+  ) {
+    const addr = await ctx.db.get(finalOrder.addressId as Id<"addresses">);
+    deliveryAddress = addr?.formatted ?? null;
+  }
+
   if (customerEmail) {
     const rendered = await renderOrderConfirmation(ctx, {
       storeName,
@@ -432,6 +443,9 @@ async function finalizeFromPaymentEvent(
       totalCents: finalOrder.pricingSnapshot.totalCents,
       scheduledSlotKey: finalOrder.scheduledSlotKey,
       guestToken: finalOrder.guestToken,
+      storeAddress,
+      deliveryAddress,
+      pricingSnapshot: finalOrder.pricingSnapshot,
       items: orderItems,
     });
     await ctx.scheduler.runAfter(0, internal.notifications.sendOrderConfirmation, {
@@ -447,26 +461,20 @@ async function finalizeFromPaymentEvent(
     });
   }
 
-  if (storeEmail && notifyOwner) {
-    let deliveryAddress: string | null = null;
-    if (
-      (finalOrder.fulfillmentMode === "delivery" || finalOrder.fulfillmentMode === "shipping") &&
-      finalOrder.addressId
-    ) {
-      const addr = await ctx.db.get(finalOrder.addressId as Id<"addresses">);
-      deliveryAddress = addr?.formatted ?? null;
-    }
-    const rendered = await renderOwnerNotification(ctx, {
-      storeName,
-      siteUrl,
-      orderNumber: finalOrder.orderNumber,
-      fulfillmentMode: finalOrder.fulfillmentMode,
-      totalCents: finalOrder.pricingSnapshot.totalCents,
-      scheduledSlotKey: finalOrder.scheduledSlotKey,
-      deliveryAddress,
-      contactEmail: finalOrder.contactEmail,
-      contactPhone: finalOrder.contactPhone,
-      items: orderItems,
+    if (storeEmail && notifyOwner) {
+      const rendered = await renderOwnerNotification(ctx, {
+        storeName,
+        siteUrl,
+        orderNumber: finalOrder.orderNumber,
+        fulfillmentMode: finalOrder.fulfillmentMode,
+        totalCents: finalOrder.pricingSnapshot.totalCents,
+        scheduledSlotKey: finalOrder.scheduledSlotKey,
+        storeAddress,
+        deliveryAddress,
+        contactEmail: finalOrder.contactEmail,
+        contactPhone: finalOrder.contactPhone,
+        contactName: finalOrder.contactName,
+        items: orderItems,
       pricingSnapshot: finalOrder.pricingSnapshot,
       appliedCouponCode: finalOrder.appliedCouponCode,
       loyaltyPointsRedeemed: finalOrder.loyaltyPointsRedeemed,
@@ -727,6 +735,7 @@ export const completeFreeOrder = mutation({
         modifiersSnapshot: modifierSnapshots,
         qty: item.qty,
         unitPriceCents: item.unitPriceSnapshotCents,
+        itemNote: item.itemNote ?? undefined,
         createdAt: now,
       });
     }
@@ -812,7 +821,7 @@ export const completeFreeOrder = mutation({
     const settingsRows = await ctx.db.query("siteSettings").collect();
     const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
     const storeName = settings.storeName ?? "TheTipsyCake";
-    const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
+    const siteUrl = settings.siteUrl ?? "https://order.thetipsycake.com";
     const storeEmail = settings.storeEmail?.trim();
     const notifyOwner = settings.notifyOwnerOnOrder !== "false";
 
@@ -828,6 +837,16 @@ export const completeFreeOrder = mutation({
       customerEmailForFree = user?.email?.trim();
     }
 
+    const storeAddressForFree = settings.storeAddress?.trim() ?? null;
+    let deliveryAddressForFree: string | null = null;
+    if (
+      (finalOrder.fulfillmentMode === "delivery" || finalOrder.fulfillmentMode === "shipping") &&
+      finalOrder.addressId
+    ) {
+      const addr = await ctx.db.get(finalOrder.addressId as Id<"addresses">);
+      deliveryAddressForFree = addr?.formatted ?? null;
+    }
+
     if (customerEmailForFree) {
       const rendered = await renderOrderConfirmation(ctx, {
         storeName,
@@ -837,6 +856,9 @@ export const completeFreeOrder = mutation({
         totalCents: finalOrder.pricingSnapshot.totalCents,
         scheduledSlotKey: finalOrder.scheduledSlotKey,
         guestToken: finalOrder.guestToken,
+        storeAddress: storeAddressForFree,
+        deliveryAddress: deliveryAddressForFree,
+        pricingSnapshot: finalOrder.pricingSnapshot,
         items: orderItemsForEmail,
       });
       await ctx.scheduler.runAfter(0, internal.notifications.sendOrderConfirmation, {
@@ -853,14 +875,6 @@ export const completeFreeOrder = mutation({
     }
 
     if (storeEmail && notifyOwner) {
-      let deliveryAddress: string | null = null;
-      if (
-        (finalOrder.fulfillmentMode === "delivery" || finalOrder.fulfillmentMode === "shipping") &&
-        finalOrder.addressId
-      ) {
-        const addr = await ctx.db.get(finalOrder.addressId as Id<"addresses">);
-        deliveryAddress = addr?.formatted ?? null;
-      }
       const rendered = await renderOwnerNotification(ctx, {
         storeName,
         siteUrl,
@@ -868,9 +882,11 @@ export const completeFreeOrder = mutation({
         fulfillmentMode: finalOrder.fulfillmentMode,
         totalCents: finalOrder.pricingSnapshot.totalCents,
         scheduledSlotKey: finalOrder.scheduledSlotKey,
-        deliveryAddress,
+        storeAddress: storeAddressForFree,
+        deliveryAddress: deliveryAddressForFree,
         contactEmail: finalOrder.contactEmail,
         contactPhone: finalOrder.contactPhone,
+        contactName: finalOrder.contactName,
         items: orderItemsForEmail,
         pricingSnapshot: finalOrder.pricingSnapshot,
         appliedCouponCode: finalOrder.appliedCouponCode,

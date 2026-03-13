@@ -140,17 +140,29 @@ export default function OrderStatusByTokenPage() {
           <CardTitle className="font-display text-2xl text-brand-text">Items</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
-          {order.items.map((item) => (
-            <div key={item._id} className="flex items-center justify-between rounded border p-3">
-              <div>
-                <p className="font-medium">
-                  {productDisplayName((item.productSnapshot as { name?: string })?.name ?? "") || "Item"}
-                </p>
-                <p className="text-xs text-muted-foreground">Qty {item.qty}</p>
+          {order.items.map((item) => {
+            const name = productDisplayName((item.productSnapshot as { name?: string })?.name ?? "") || "Item";
+            const variant = item.variantSnapshot
+              ? (item.variantSnapshot as { label?: string }).label
+              : null;
+            const base = variant ? `${name} (${variant})` : name;
+            const addons = (item.modifiersSnapshot ?? [])
+              .map((m) => (m as { optionName?: string }).optionName)
+              .filter(Boolean);
+            const fullLine = addons.length > 0 ? `${base} + ${addons.join(", ")}` : base;
+            return (
+              <div key={item._id} className="flex items-center justify-between rounded border p-3">
+                <div>
+                  <p className="font-medium">{fullLine}</p>
+                  <p className="text-xs text-muted-foreground">Qty {item.qty}</p>
+                  {item.itemNote && (
+                    <p className="mt-0.5 text-xs text-muted-foreground italic">Note: {item.itemNote}</p>
+                  )}
+                </div>
+                <p className="font-medium">{dollars(item.unitPriceCents * item.qty)}</p>
               </div>
-              <p className="font-medium">{dollars(item.unitPriceCents * item.qty)}</p>
-            </div>
-          ))}
+            );
+          })}
           <div className="flex items-center justify-between border-t pt-3 font-semibold">
             <span>Total</span>
             <span>{dollars(order.pricingSnapshot.totalCents)}</span>

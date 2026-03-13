@@ -4,7 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 
 import { internal } from "./_generated/api";
 import { requireRole } from "./lib/auth";
-import { renderStatusUpdate } from "./lib/emailTemplates";
+import { renderOwnerOrderComplete, renderStatusUpdate } from "./lib/emailTemplates";
 
 /**
  * Orders available for drivers to claim. Delivery mode, ready_for_delivery, no assignment.
@@ -121,7 +121,7 @@ export const claimOrder = mutation({
       const settingsRows = await ctx.db.query("siteSettings").collect();
       const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
       const storeName = settings.storeName ?? "TheTipsyCake";
-      const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
+      const siteUrl = settings.siteUrl ?? "https://order.thetipsycake.com";
       const smsEnabled = settings.smsEnabled !== "false";
       const rendered = await renderStatusUpdate(ctx, {
         storeName,
@@ -221,9 +221,9 @@ export const updateStatus = mutation({
         const settingsRows = await ctx.db.query("siteSettings").collect();
         const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
         const smsEnabled = settings.smsEnabled !== "false";
+        const storeName = settings.storeName ?? "TheTipsyCake";
+        const siteUrl = settings.siteUrl ?? "https://order.thetipsycake.com";
         if (order.contactEmail || order.contactPhone) {
-          const storeName = settings.storeName ?? "TheTipsyCake";
-          const siteUrl = settings.siteUrl ?? "https://order.tipsycake.com";
           const rendered = await renderStatusUpdate(ctx, {
             storeName,
             orderNumber: order.orderNumber,
@@ -243,12 +243,20 @@ export const updateStatus = mutation({
         const storeEmail = settings.storeEmail?.trim();
         const notifyOwner = settings.notifyOwnerOnOrder !== "false";
         if (storeEmail && notifyOwner) {
+          const rendered = await renderOwnerOrderComplete(ctx, {
+            siteUrl,
+            orderNumber: order.orderNumber,
+            status: "delivered",
+            orderId: order._id,
+          });
           await ctx.scheduler.runAfter(0, internal.notifications.sendOwnerOrderComplete, {
             email: storeEmail,
             phone: smsEnabled ? settings.storePhone?.trim() || undefined : undefined,
             orderNumber: order.orderNumber,
             orderId: order._id,
             status: "delivered",
+            subjectOverride: rendered.subject,
+            htmlOverride: rendered.html,
           });
         }
       }

@@ -39,7 +39,7 @@ const STORE_FIELDS = [
   { key: "storeEmail", label: "Store Email", placeholder: "hello@thetipsycake.com" },
   { key: "storeAddress", label: "Store Address", placeholder: "123 Main St, Anytown, ST 12345" },
   { key: "storeTimezone", label: "Timezone", placeholder: "America/New_York" },
-  { key: "siteUrl", label: "Site URL", placeholder: "https://order.tipsycake.com" },
+  { key: "siteUrl", label: "Site URL", placeholder: "https://order.thetipsycake.com" },
   {
     key: "homeUrl",
     label: "Home URL",
