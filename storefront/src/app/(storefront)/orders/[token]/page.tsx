@@ -26,6 +26,22 @@ function dollars(cents: number) {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+/** Split modifiers into shape (Shape group) vs extras (Birthday, etc.). */
+function parseModifiers(modifiersSnapshot: Array<{ groupName?: string; optionName?: string }> | undefined): { shape: string; extras: string[] } {
+  const mods = modifiersSnapshot ?? [];
+  let shape = "";
+  const extras: string[] = [];
+  for (const m of mods) {
+    const opt = (m as { optionName?: string }).optionName ?? "";
+    if ((m as { groupName?: string }).groupName?.toLowerCase() === "shape") {
+      shape = opt;
+    } else if (opt) {
+      extras.push(opt);
+    }
+  }
+  return { shape, extras };
+}
+
 export default function OrderStatusByTokenPage() {
   const params = useParams<{ token: string }>();
   const token = params.token as string;
@@ -148,33 +164,48 @@ export default function OrderStatusByTokenPage() {
 
       <Card className="rounded-2xl">
         <CardHeader>
-          <CardTitle className="font-display text-2xl text-brand-text">Items</CardTitle>
+          <CardTitle className="font-display text-2xl text-brand-text">Your order</CardTitle>
+          <CardDescription>What you ordered</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-2 text-sm">
+        <CardContent className="space-y-4">
           {order.items.map((item) => {
             const name = productDisplayName((item.productSnapshot as { name?: string })?.name ?? "") || "Item";
             const variant = item.variantSnapshot
               ? (item.variantSnapshot as { label?: string }).label
               : null;
-            const base = variant ? `${name} (${variant})` : name;
-            const addons = (item.modifiersSnapshot ?? [])
-              .map((m) => (m as { optionName?: string }).optionName)
-              .filter(Boolean);
-            const fullLine = addons.length > 0 ? `${base} + ${addons.join(", ")}` : base;
+            const { shape, extras } = parseModifiers(item.modifiersSnapshot);
+            const lineTotal = item.unitPriceCents * item.qty;
             return (
-              <div key={item._id} className="flex items-center justify-between rounded border p-3">
-                <div>
-                  <p className="font-medium">{fullLine}</p>
-                  <p className="text-xs text-muted-foreground">Qty {item.qty}</p>
-                  {item.itemNote && (
-                    <p className="mt-0.5 text-xs text-muted-foreground italic">Note: {item.itemNote}</p>
-                  )}
+              <div key={item._id} className="rounded-xl border border-stone-200 bg-stone-50/50 p-4 space-y-2">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <p className="font-semibold text-brand-text">
+                      {name}
+                      {variant && <span className="font-normal text-muted-foreground"> · {variant}</span>}
+                    </p>
+                    {shape && (
+                      <p className="text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">Shape:</span> {shape}
+                      </p>
+                    )}
+                    {extras.length > 0 && (
+                      <p className="text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">Add-ons:</span> {extras.join(", ")}
+                      </p>
+                    )}
+                    {item.itemNote && (
+                      <p className="text-sm text-muted-foreground italic">Note: {item.itemNote}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {item.qty} × {dollars(item.unitPriceCents)}
+                    </p>
+                  </div>
+                  <p className="font-semibold shrink-0">{dollars(lineTotal)}</p>
                 </div>
-                <p className="font-medium">{dollars(item.unitPriceCents * item.qty)}</p>
               </div>
             );
           })}
-          <div className="flex items-center justify-between border-t pt-3 font-semibold">
+          <div className="flex items-center justify-between border-t border-stone-200 pt-4 font-semibold text-base">
             <span>Total</span>
             <span>{dollars(order.pricingSnapshot.totalCents)}</span>
           </div>

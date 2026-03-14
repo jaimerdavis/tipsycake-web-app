@@ -43,7 +43,7 @@ import {
   getPreferredFulfillment,
 } from "@/lib/fulfillmentPreference";
 import { toast } from "sonner";
-import { extractCouponErrorMessage, productDisplayName } from "@/lib/utils";
+import { productDisplayName } from "@/lib/utils";
 
 function fmt(cents: number) {
   return `$${(cents / 100).toFixed(2)}`;
@@ -222,7 +222,6 @@ function CheckoutContent() {
   const [contactEmail, setContactEmail] = useState("");
   const [contactPhone, setContactPhone] = useState("");
   const [contactName, setContactName] = useState("");
-  const [cakeFor, setCakeFor] = useState("");
   const [contactSynced, setContactSynced] = useState(false);
 
   const [savingContact, setSavingContact] = useState(false);
@@ -241,11 +240,6 @@ function CheckoutContent() {
     lng: number;
     placeId?: string;
   } | null>(null);
-  const [couponCode, setCouponCode] = useState("");
-  const [couponMessage, setCouponMessage] = useState<{ text: string; error: boolean } | null>(null);
-
-  const applyCoupon = useMutation(api.cart.applyCoupon);
-  const removeCoupon = useMutation(api.cart.removeCoupon);
 
   const GUEST_CHOSEN_KEY = "checkoutGuestChosen";
   const [guestCheckoutChosen, setGuestCheckoutChosen] = useState(false);
@@ -279,11 +273,9 @@ function CheckoutContent() {
     const email = cart.contactEmail ?? clerkEmail ?? "";
     const phone = cart.contactPhone ?? clerkPhone ?? "";
     const name = cart.contactName ?? clerkName ?? "";
-    const forVal = cart.cakeFor ?? "";
     setContactEmail(email);
     setContactPhone(phone);
     setContactName(name);
-    setCakeFor(forVal);
     // Only sync address from cart when initializing or when cart confirms our selection.
     // Avoid overwriting during setFulfillment in-flight (prevents address "bouncing").
     setSelectedAddressId((prev) => {
@@ -341,7 +333,7 @@ function CheckoutContent() {
 
 
   const needsScheduling = needsSchedulingForMode;
-  const contactReady = cart ? !!(cart.contactEmail && cart.contactPhone) : false;
+  const contactReady = cart ? !!(cart.contactEmail && cart.contactPhone && cart.contactName) : false;
   const fulfillmentReady = cart ? !!cart.fulfillmentMode : false;
   const schedulingReady = cart ? (!needsScheduling || !!cart.slotHoldId) : false;
   const addressReady =
@@ -379,7 +371,7 @@ function CheckoutContent() {
       return;
     }
     if (!contactReady) {
-      setSectionBlockMessage({ contact: "Save your email and phone to continue." });
+      setSectionBlockMessage({ contact: "Save your name, email, and phone to continue." });
       contactSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
@@ -840,7 +832,8 @@ function CheckoutContent() {
                 Shipping and Delivery (3-5 Business Days)
                 {eligibility ? (
                   <> Shipping: {fmt(eligibility.shipping.feeCents)}
-                  {cakeCount > 1 ? ` (${cakeCount} cakes × ${fmt(Math.round(eligibility.shipping.feeCents / cakeCount))})` : ""}.</>
+                  {cakeCount > 1 ? ` (${cakeCount} cakes × ${fmt(Math.round(eligibility.shipping.feeCents / cakeCount))})` : ""}.
+                  </>
                 ) : null}
               </p>
             ) : null}
@@ -1041,7 +1034,7 @@ function CheckoutContent() {
             <CardDescription>
               {clerkEmail && (cart?.contactEmail || contactEmail)
                 ? "Using your account email. Update if needed."
-                : "Email and phone both required before payment. You can fill these in any order."}
+                : "Name, email, and phone all required before payment. You can fill these in any order."}
             </CardDescription>
             {sectionBlockMessage?.contact && (
               <p className="text-sm text-amber-600 font-medium">{sectionBlockMessage.contact}</p>
@@ -1057,7 +1050,7 @@ function CheckoutContent() {
               className="space-y-4"
             >
             <div className="space-y-2">
-              <Label htmlFor="contactName">Name (optional)</Label>
+              <Label htmlFor="contactName">Name <span className="text-destructive">*</span></Label>
               <Input
                 id="contactName"
                 name="name"
@@ -1072,16 +1065,14 @@ function CheckoutContent() {
                   const email = contactEmail.trim() || undefined;
                   const phone = contactPhone.trim() || undefined;
                   const name = contactName.trim() || undefined;
-                  const forVal = cakeFor.trim() || undefined;
                   const unchanged =
                     email === (cart.contactEmail ?? "") &&
                     phone === (cart.contactPhone ?? "") &&
-                    name === (cart.contactName ?? "") &&
-                    forVal === (cart.cakeFor ?? "");
+                    name === (cart.contactName ?? "");
                   if (unchanged) return;
                   setSavingContact(true);
                   try {
-                    await setContact({ cartId: cart._id, email, phone, contactName: name, cakeFor: forVal });
+                    await setContact({ cartId: cart._id, email, phone, contactName: name });
                     setMessage("Contact info saved.");
                   } catch (err) {
                     setMessage(err instanceof Error ? err.message : "Save failed");
@@ -1110,12 +1101,10 @@ function CheckoutContent() {
                     const email = contactEmail.trim() || undefined;
                     const phone = contactPhone.trim() || undefined;
                     const name = contactName.trim() || undefined;
-                    const forVal = cakeFor.trim() || undefined;
                     const unchanged =
                       email === (cart.contactEmail ?? "") &&
                       phone === (cart.contactPhone ?? "") &&
-                      name === (cart.contactName ?? "") &&
-                      forVal === (cart.cakeFor ?? "");
+                      name === (cart.contactName ?? "");
                     if (unchanged) return;
                     setSavingContact(true);
                     try {
@@ -1124,7 +1113,6 @@ function CheckoutContent() {
                         email,
                         phone,
                         contactName: name,
-                        cakeFor: forVal,
                       });
                       setMessage("Contact info saved.");
                     } catch (err) {
@@ -1153,12 +1141,10 @@ function CheckoutContent() {
                     const email = contactEmail.trim() || undefined;
                     const phone = contactPhone.trim() || undefined;
                     const name = contactName.trim() || undefined;
-                    const forVal = cakeFor.trim() || undefined;
                     const unchanged =
                       email === (cart.contactEmail ?? "") &&
                       phone === (cart.contactPhone ?? "") &&
-                      name === (cart.contactName ?? "") &&
-                      forVal === (cart.cakeFor ?? "");
+                      name === (cart.contactName ?? "");
                     if (unchanged) return;
                     setSavingContact(true);
                     try {
@@ -1167,75 +1153,6 @@ function CheckoutContent() {
                         email,
                         phone,
                         contactName: name,
-                        cakeFor: forVal,
-                      });
-                      setMessage("Contact info saved.");
-                    } catch (err) {
-                      setMessage(err instanceof Error ? err.message : "Save failed");
-                    } finally {
-                      setSavingContact(false);
-                    }
-                  }}
-                />
-              </div>
-            </div>
-            <div className="space-y-3 pt-2">
-              <div className="space-y-2">
-                <Label htmlFor="cakeFor">Who is this cake for? (optional)</Label>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    variant={cakeFor.toLowerCase() === "myself" ? "default" : "outline"}
-                    size="sm"
-                    className="rounded-full"
-                    onClick={() => {
-                      setCakeFor("Myself");
-                      if (cart && !savingContact) {
-                        setSavingContact(true);
-                        setContact({
-                          cartId: cart._id,
-                          email: contactEmail.trim() || undefined,
-                          phone: contactPhone.trim() || undefined,
-                          contactName: contactName.trim() || undefined,
-                          cakeFor: "Myself",
-                        })
-                          .then(() => setMessage("Contact info saved."))
-                          .catch((err) => setMessage(err instanceof Error ? err.message : "Save failed"))
-                          .finally(() => setSavingContact(false));
-                      }
-                    }}
-                  >
-                    For myself
-                  </Button>
-                </div>
-                <Input
-                  id="cakeFor"
-                  name="cakeFor"
-                  type="text"
-                  className="rounded-xl"
-                  placeholder="e.g. Sarah, John's birthday"
-                  value={cakeFor}
-                  onChange={(e) => setCakeFor(e.target.value)}
-                  onBlur={async () => {
-                    if (!cart || savingContact) return;
-                    const email = contactEmail.trim() || undefined;
-                    const phone = contactPhone.trim() || undefined;
-                    const name = contactName.trim() || undefined;
-                    const forVal = cakeFor.trim() || undefined;
-                    const unchanged =
-                      email === (cart.contactEmail ?? "") &&
-                      phone === (cart.contactPhone ?? "") &&
-                      name === (cart.contactName ?? "") &&
-                      forVal === (cart.cakeFor ?? "");
-                    if (unchanged) return;
-                    setSavingContact(true);
-                    try {
-                      await setContact({
-                        cartId: cart._id,
-                        email,
-                        phone,
-                        contactName: name,
-                        cakeFor: forVal,
                       });
                       setMessage("Contact info saved.");
                     } catch (err) {
@@ -1699,92 +1616,18 @@ function CheckoutContent() {
               </p>
             </CardContent>
           </Card>
-        ) : !paymentReady ? (
-          <Card className="rounded-2xl">
-            <CardHeader>
-              <CardTitle className="font-display text-2xl text-brand-text">Payment</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Complete the steps above before payment.
-              </p>
-              <Button
-                variant="outline"
-                className="rounded-full"
-                onClick={scrollToFirstBlocker}
-              >
-                Take me to the next step
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
+        ) : cart ? (
           <div className="space-y-4">
-            {/* Coupon - apply before payment */}
-            <form
-              className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-2"
-              onSubmit={async (e) => {
-                e.preventDefault();
-                setCouponMessage(null);
-                if (!couponCode.trim()) {
-                  setCouponMessage({ text: "Please enter a coupon code.", error: true });
-                  return;
-                }
-                try {
-                  await applyCoupon({ cartId: cart._id, code: couponCode });
-                  setCouponMessage({ text: "Coupon applied!", error: false });
-                  setCouponCode("");
-                } catch (err) {
-                  setCouponMessage({
-                    text: extractCouponErrorMessage(err),
-                    error: true,
-                  });
-                }
-              }}
-            >
-              <div className="flex-1 space-y-1">
-                <Label htmlFor="checkout-coupon" className="text-sm">Coupon code</Label>
-                <Input
-                  id="checkout-coupon"
-                  className="rounded-xl"
-                  value={couponCode}
-                  onChange={(e) => setCouponCode(e.target.value)}
-                  placeholder="Enter code"
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  type="submit"
-                  size="sm"
-                  className="rounded-full bg-button text-stone-50 hover:bg-button-hover"
-                >
-                  Apply
-                </Button>
-                {cart.appliedCouponCode && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="rounded-full"
-                    onClick={async () => {
-                      await removeCoupon({ cartId: cart._id });
-                      setCouponMessage({ text: "Coupon removed.", error: false });
-                    }}
-                  >
-                    Remove
-                  </Button>
-                )}
-              </div>
-            </form>
-            {couponMessage && (
-              <p className={`text-sm ${couponMessage.error ? "text-destructive" : "text-green-600"}`}>
-                {couponMessage.text}
-              </p>
-            )}
-            {cart.appliedCouponCode && (
-              <Badge variant="secondary" className="w-fit rounded-full">
-                Applied: {cart.appliedCouponCode}
-              </Badge>
-            )}
-
+            <Card className="rounded-2xl">
+              <CardHeader>
+                <CardTitle className="font-display text-2xl text-brand-text">Payment</CardTitle>
+                <CardDescription>
+                  {!paymentReady
+                    ? "Complete the steps above (contact, fulfillment, scheduling) to enable payment."
+                    : undefined}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
             {pricing && cart.items && (
               <div className="rounded-xl border bg-muted/30 px-4 py-3 space-y-3">
                 <p className="text-sm font-medium text-muted-foreground">Order details</p>
@@ -1856,7 +1699,7 @@ function CheckoutContent() {
                 </div>
               </div>
             )}
-            {pricing && (() => {
+            {paymentReady && pricing && (() => {
               const displayTotalCents =
                 pricing.subtotalCents -
                 pricing.discountCents +
@@ -1874,7 +1717,7 @@ function CheckoutContent() {
                 }}
                 onError={(msg) => setMessage(msg)}
               />
-            ) : (
+            ) : paymentReady ? (
               <div>
                 <StripePaymentForm
                   key={`${cart._id}-${cart.updatedAt}`}
@@ -1888,9 +1731,15 @@ function CheckoutContent() {
                   onError={(msg) => setMessage(msg)}
                 />
               </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Complete the steps above (contact, fulfillment, scheduling) to enable payment.
+              </p>
             )}
+              </CardContent>
+            </Card>
           </div>
-        )}
+        ) : null}
       </section>
     </main>
   );

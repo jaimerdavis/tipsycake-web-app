@@ -701,7 +701,7 @@ function ProductDetailContent() {
                 form="product-form"
                 className="min-h-12 w-full shrink-0 rounded-full bg-button px-6 text-stone-50 hover:bg-button-hover active:scale-[0.98] sm:w-auto sm:px-8 whitespace-nowrap"
               >
-                {isEditMode ? "Update Cake Purchase" : "Purchase Cake"}
+                {isEditMode ? "Update in Cart" : "Add to Cart"}
               </Button>
             </div>
           </div>
