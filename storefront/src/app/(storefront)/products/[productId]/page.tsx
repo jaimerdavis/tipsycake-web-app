@@ -460,18 +460,9 @@ function ProductDetailContent() {
             <h1 className="font-display text-5xl text-brand-text">{productDisplayName(product.name)}</h1>
             {isEditMode && <Badge variant="secondary" className="rounded-full">Editing</Badge>}
           </div>
-          {(() => {
-            const short = (product as { shortDescription?: string }).shortDescription?.trim();
-            const full = product.description;
-            return (
-              <div className="space-y-0.5">
-                {short && (
-                  <p className="text-xs text-muted-foreground">{short}</p>
-                )}
-                <p className={short ? "text-[11px] text-muted-foreground/90 leading-relaxed" : "text-sm text-muted-foreground"}>{full}</p>
-              </div>
-            );
-          })()}
+          {product.description && (
+            <p className="text-sm text-muted-foreground leading-relaxed">{product.description}</p>
+          )}
         </div>
         <div className="space-y-3">
           <div className="relative">
