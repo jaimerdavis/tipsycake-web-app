@@ -43,7 +43,11 @@ export const listAddresses = query({
       }
     }
 
-    if (args.contactEmail?.trim()) {
+    // Only show email-matched addresses (historical imports) to signed-in users.
+    // Guests only see addresses they added this session (ownerId = guestSessionId).
+    const identity = await ctx.auth.getUserIdentity();
+    const isSignedIn = !!(identity && typeof identity === "object" && identity !== null);
+    if (isSignedIn && args.contactEmail?.trim()) {
       const emailKey = `email:${args.contactEmail.trim().toLowerCase()}`;
       const byEmail = await ctx.db
         .query("addresses")

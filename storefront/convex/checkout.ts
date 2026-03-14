@@ -225,11 +225,23 @@ export const setFulfillment = mutation({
       }
     }
 
-    await ctx.db.patch(args.cartId, {
+    const modeChanged = cart.fulfillmentMode !== effectiveMode;
+    const patch: { fulfillmentMode: typeof effectiveMode; addressId?: Id<"addresses">; slotHoldId?: undefined; updatedAt: number } = {
       fulfillmentMode: effectiveMode,
       addressId: args.addressId ?? undefined,
       updatedAt: Date.now(),
-    });
+    };
+    if (modeChanged && cart.slotHoldId) {
+      const oldHold = await ctx.db.get(cart.slotHoldId as Id<"slotHolds">);
+      if (oldHold && "status" in oldHold && oldHold.status === "held") {
+        await ctx.db.patch(cart.slotHoldId as Id<"slotHolds">, {
+          status: "released",
+          updatedAt: Date.now(),
+        });
+      }
+      patch.slotHoldId = undefined;
+    }
+    await ctx.db.patch(args.cartId, patch);
 
     return { cartId: args.cartId, overriddenToDelivery };
   },

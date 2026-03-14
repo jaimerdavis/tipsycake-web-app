@@ -452,19 +452,17 @@ function CheckoutContent() {
   );
   const [selectedDate, setSelectedDate] = useState("");
   const [calendarOpen, setCalendarOpen] = useState(false);
-  const autoSelectedSlotRef = useRef<string | null>(null);
 
-  // Auto-select today when it's the first available date (so slots show without extra click)
+  // Clear date/scheduling when switching fulfillment mode (prevents stale delivery date showing for pickup)
+  const prevModeRef = useRef<typeof selectedMode>(selectedMode);
   useEffect(() => {
-    if (selectedDate || !availableDates?.length) return;
-    const today = new Date();
-    const todayYmd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-    if (availableDates.includes(todayYmd)) {
-      setSelectedDate(todayYmd);
-    } else if (availableDates[0]) {
-      setSelectedDate(availableDates[0]);
+    if (prevModeRef.current !== selectedMode) {
+      prevModeRef.current = selectedMode;
+      setSelectedDate("");
+      setCalendarOpen(false);
     }
-  }, [availableDates, selectedDate]);
+  }, [selectedMode]);
+
   const currentHold = useQuery(
     api.scheduling.getHold,
     cart?.slotHoldId ? { holdId: cart.slotHoldId as never } : "skip"
@@ -480,22 +478,6 @@ function CheckoutContent() {
         }
       : "skip"
   );
-
-  // Auto-select first available slot when slots load (avoids "no slot selected" flow)
-  useEffect(() => {
-    if (!slots?.available?.length || slots.selectedSlotKey || !cart) return;
-    const firstKey = slots.available[0].slotKey;
-    if (autoSelectedSlotRef.current === firstKey) return;
-    autoSelectedSlotRef.current = firstKey;
-    createHold({ cartId: cart._id, slotKey: firstKey }).catch(() => {
-      autoSelectedSlotRef.current = null;
-    });
-  }, [slots?.available, slots?.selectedSlotKey, cart, createHold]);
-
-  // Reset auto-select ref when date changes so we can auto-select for new date
-  useEffect(() => {
-    autoSelectedSlotRef.current = null;
-  }, [selectedDate]);
 
   // Show order confirmation when: (a) returning from Stripe redirect with success params, or
   // (b) payment completed in-page (Stripe no-redirect or $0 free order) and cart was cleared
@@ -895,9 +877,20 @@ function CheckoutContent() {
           <CardContent className="space-y-3">
             <div className="space-y-2">
               <Label>Available date</Label>
-              <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-                <PopoverTrigger asChild>
+              <Sheet
+                open={calendarOpen}
+                onOpenChange={(open) => {
+                  if (open) {
+                    // Defer to avoid Radix DismissableLayer conflict with other overlays
+                    setTimeout(() => setCalendarOpen(true), 50);
+                  } else {
+                    setCalendarOpen(false);
+                  }
+                }}
+              >
+                <SheetTrigger asChild>
                   <Button
+                    type="button"
                     variant="outline"
                     className="h-11 w-full justify-start rounded-xl text-left font-normal data-[state=open]:bg-accent"
                   >
@@ -906,66 +899,61 @@ function CheckoutContent() {
                         ? formatDateForDisplay(selectedDate)
                         : "Select a date"}
                     </span>
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="ml-auto shrink-0 opacity-50"
-                    >
-                      <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
-                      <line x1="16" x2="16" y1="2" y2="6" />
-                      <line x1="8" x2="8" y1="2" y2="6" />
-                      <line x1="3" x2="21" y1="10" y2="10" />
-                    </svg>
+                    <ChevronDown className="ml-auto size-4 shrink-0 opacity-50" />
                   </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto overflow-hidden rounded-2xl p-0 shadow-lg" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={
-                      selectedDate
-                        ? new Date(
-                            Number(selectedDate.slice(0, 4)),
-                            Number(selectedDate.slice(5, 7)) - 1,
-                            Number(selectedDate.slice(8, 10))
-                          )
-                        : undefined
-                    }
-                    onSelect={(date) => {
-                      if (date) {
-                        const y = date.getFullYear();
-                        const m = String(date.getMonth() + 1).padStart(2, "0");
-                        const d = String(date.getDate()).padStart(2, "0");
-                        setSelectedDate(`${y}-${m}-${d}`);
-                        setCalendarOpen(false);
+                </SheetTrigger>
+                <SheetContent
+                  side="bottom"
+                  className="rounded-t-2xl max-h-[85vh] overflow-y-auto"
+                  onOpenAutoFocus={(e) => e.preventDefault()}
+                >
+                  <SheetHeader>
+                    <SheetTitle>Choose a date</SheetTitle>
+                  </SheetHeader>
+                  <div className="flex justify-center p-6">
+                    <Calendar
+                      mode="single"
+                      selected={
+                        selectedDate
+                          ? new Date(
+                              Number(selectedDate.slice(0, 4)),
+                              Number(selectedDate.slice(5, 7)) - 1,
+                              Number(selectedDate.slice(8, 10))
+                            )
+                          : undefined
                       }
-                    }}
-                    disabled={(date) => {
-                      const ymd = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-                      return !(availableDates ?? []).includes(ymd);
-                    }}
-                    defaultMonth={
-                      (availableDates ?? []).length > 0
-                        ? (() => {
-                            const first = (availableDates ?? [])[0];
-                            return new Date(
-                              Number(first.slice(0, 4)),
-                              Number(first.slice(5, 7)) - 1,
-                              Number(first.slice(8, 10))
-                            );
-                          })()
-                        : new Date()
-                    }
-                    className="rounded-xl border-0"
-                  />
-                </PopoverContent>
-              </Popover>
+                      onSelect={(date) => {
+                        if (date) {
+                          const y = date.getFullYear();
+                          const m = String(date.getMonth() + 1).padStart(2, "0");
+                          const d = String(date.getDate()).padStart(2, "0");
+                          setSelectedDate(`${y}-${m}-${d}`);
+                          setCalendarOpen(false);
+                        }
+                      }}
+                      disabled={(date) => {
+                        const ymd = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+                        const dates = availableDates ?? [];
+                        if (dates.length === 0) return false; // Allow interaction when loading/empty
+                        return !dates.includes(ymd);
+                      }}
+                      defaultMonth={
+                        (availableDates ?? []).length > 0
+                          ? (() => {
+                              const first = (availableDates ?? [])[0];
+                              return new Date(
+                                Number(first.slice(0, 4)),
+                                Number(first.slice(5, 7)) - 1,
+                                Number(first.slice(8, 10))
+                              );
+                            })()
+                          : new Date()
+                      }
+                      className="rounded-xl border-0"
+                    />
+                  </div>
+                </SheetContent>
+              </Sheet>
             </div>
 
             {selectedDate && (
@@ -1556,7 +1544,9 @@ function CheckoutContent() {
                     }}
                     disabled={(date) => {
                       const ymd = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-                      return !(availableDates ?? []).includes(ymd);
+                      const dates = availableDates ?? [];
+                      if (dates.length === 0) return false; // Allow interaction when loading/empty
+                      return !dates.includes(ymd);
                     }}
                     defaultMonth={
                       (availableDates ?? []).length > 0
