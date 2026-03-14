@@ -351,12 +351,9 @@ export default function AdminOrdersPage() {
                     )}
                   </p>
                   <p className="text-sm text-muted-foreground">{order.contactPhone ?? order.contactEmail ?? "—"}</p>
-                  {((order as { cakeFor?: string }).cakeFor || (order as { occasion?: string }).occasion) && (
+                  {(order as { cakeFor?: string }).cakeFor && (
                     <p className="mt-1 text-sm text-muted-foreground">
-                      {[(order as { cakeFor?: string }).cakeFor && `For: ${(order as { cakeFor?: string }).cakeFor}`,
-                        (order as { occasion?: string }).occasion && `Occasion: ${(order as { occasion?: string }).occasion}`]
-                        .filter(Boolean)
-                        .join(" · ")}
+                      For: {(order as { cakeFor?: string }).cakeFor}
                     </p>
                   )}
                   {(order.fulfillmentMode === "delivery" || order.fulfillmentMode === "shipping") &&

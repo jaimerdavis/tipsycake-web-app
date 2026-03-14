@@ -422,17 +422,15 @@ export function buildContactInfoHtml(
   </div>`;
 }
 
-/** Build optional gift/occasion block for owner notification. */
-export function buildGiftOccasionHtml(cakeFor?: string | null, occasion?: string | null): string {
+/** Build optional gift block for owner notification. */
+export function buildGiftOccasionHtml(cakeFor?: string | null): string {
   const hasCakeFor = cakeFor?.trim();
-  const hasOccasion = occasion?.trim();
-  if (!hasCakeFor && !hasOccasion) return "";
-  const rows: string[] = [];
-  if (hasCakeFor) rows.push(`<tr><td style="padding: 8px 0; font-weight: bold;">Cake for</td><td>${escapeHtml(hasCakeFor)}</td></tr>`);
-  if (hasOccasion) rows.push(`<tr><td style="padding: 8px 0; font-weight: bold;">Occasion</td><td>${escapeHtml(hasOccasion)}</td></tr>`);
+  if (!hasCakeFor) return "";
   return `<div style="margin: 16px 0;">
-    <p style="font-weight: bold; margin-bottom: 8px; font-size: 15px;">Gift / Occasion</p>
-    <table style="width: 100%; border-collapse: collapse;">${rows.join("")}</table>
+    <p style="font-weight: bold; margin-bottom: 8px; font-size: 15px;">Gift</p>
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr><td style="padding: 8px 0; font-weight: bold;">Cake for</td><td>${escapeHtml(hasCakeFor)}</td></tr>
+    </table>
   </div>`;
 }
 
@@ -566,7 +564,7 @@ export async function renderOwnerNotification(
     addressSection,
     contactInfo:
       buildContactInfoHtml(opts.contactEmail, opts.contactPhone, opts.contactName) +
-      buildGiftOccasionHtml(opts.cakeFor, opts.occasion),
+      buildGiftOccasionHtml(opts.cakeFor),
     adminLink: `${opts.siteUrl}/admin/orders`,
     orderDetails: opts.items?.length ? buildOrderItemsForOwnerHtml(opts.items) : "",
     total: totalFormatted,

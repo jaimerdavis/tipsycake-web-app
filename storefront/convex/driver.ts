@@ -182,7 +182,6 @@ export const myAssignments = query({
           contactPhone: order?.contactPhone ?? null,
           contactName: order?.contactName ?? null,
           cakeFor: order?.cakeFor ?? null,
-          occasion: order?.occasion ?? null,
           addressFormatted: destination?.formatted ?? null,
         };
       })
