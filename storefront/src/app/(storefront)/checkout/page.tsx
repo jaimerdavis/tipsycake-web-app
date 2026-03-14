@@ -1477,8 +1477,8 @@ function CheckoutContent() {
         </Card>
       </section>
 
-      {/* ── 3. Scheduling (pickup & delivery only; shipping ships within 24–48 hrs) ── */}
-      {needsScheduling && (
+      {/* ── 3. Scheduling (delivery only; pickup uses 2a above) ── */}
+      {selectedMode !== "pickup" && needsScheduling && (
       <section ref={schedulingSectionRef}>
         <Card className="rounded-2xl">
           <CardHeader>
